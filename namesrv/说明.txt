@@ -1,0 +1,3 @@
+nameServer的启动
+1，需要配置启动环境变量ROCKETMQ_HOEM=项目的根路径地址
+2，在项目根路径下创建conf文件夹，将distribution下面的 broker.conf，logback_broker nameServer tools文件复制到conf目录下
