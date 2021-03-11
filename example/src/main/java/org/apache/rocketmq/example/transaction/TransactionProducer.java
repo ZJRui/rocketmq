@@ -30,7 +30,12 @@ import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
+/**
+ * 事务消息只跟发送者有关，和消费者无关，因此这里只有事务消息生产者
+ */
 public class TransactionProducer {
+    //这里启动一个事务消息生产者，然后在quickstart包下启动一个consumer可以消费这个消息
+
     public static void main(String[] args) throws MQClientException, InterruptedException {
         TransactionListener transactionListener = new TransactionListenerImpl();
         TransactionMQProducer producer = new TransactionMQProducer("please_rename_unique_group_name");

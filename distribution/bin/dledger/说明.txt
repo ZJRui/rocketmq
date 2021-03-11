@@ -1,0 +1,4 @@
+Dledger做三件事情：
+（1）接管 CommitLog文件，由Dledger来帮助rocketMQ进行存盘
+（2）存在选举机制从三个broker节点中选择leader节点，leader负责响应客户端写请求
+（3）leader接收到消息之后进行存盘，同时返回一个状态 uncommited，然后dledger向flower进行同步，如果收到多半flower节点的写入响应则表示消息持久化成功
