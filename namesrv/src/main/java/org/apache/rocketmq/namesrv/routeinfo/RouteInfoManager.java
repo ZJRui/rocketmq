@@ -111,6 +111,23 @@ public class RouteInfoManager {
         RegisterBrokerResult result = new RegisterBrokerResult();
         try {
             try {
+                //为什么不是
+                //this.lock.writeLock().lock();
+                /**
+                 * 采用Lock，必须主动去释放锁，并且在发生异常时，不会自动释放锁。因此一般来说，使用Lock必须在try{}catch{}块中进行，
+                 * 并且将释放锁的操作放在finally块中进行，以保证锁一定被被释放，防止死锁的发生。
+                 *
+                 * 　lockInterruptibly()方法比较特殊，当通过这个方法去获取锁时，如果线程正在等待获取锁，则这个线程能够响应中断，
+                 * 即中断线程的等待状态。也就使说，当两个线程同时通过lock.lockInterruptibly()想获取某个锁时，假若此时线程A获取到了锁，
+                 * 而线程B只有在等待，那么对线程B调用threadB.interrupt()方法能够中断线程B的等待过程。
+                 * 　　由于lockInterruptibly()的声明中抛出了异常，所以lock.lockInterruptibly()必须放在try块中或者在调用
+                 * lockInterruptibly()的方法外声明抛出InterruptedException。
+                 * 　注意，当一个线程获取了锁之后，是不会被interrupt()方法中断的。因为本身在前面的文章中讲过单独调用interrupt()方法不
+                 * 能中断正在运行过程中的线程，只能中断阻塞过程中的线程。
+                 * 　　因此当通过lockInterruptibly()方法获取某个锁时，如果不能获取到，只有进行等待的情况下，是可以响应中断的。
+                 * 　　而用synchronized修饰的话，当一个线程处于等待某个锁的状态，是无法被中断的，只有一直等待下去。
+                 *
+                 */
                 this.lock.writeLock().lockInterruptibly();
 
                 Set<String> brokerNames = this.clusterAddrTable.get(clusterName);

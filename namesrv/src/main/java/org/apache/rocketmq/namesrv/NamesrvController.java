@@ -81,6 +81,7 @@ public class NamesrvController {
 
         this.scheduledExecutorService.scheduleAtFixedRate(new Runnable() {
 
+            //定时任务： NameServer每隔10秒扫描一次Broker，移除处于不激活状态的Broker
             @Override
             public void run() {
                 NamesrvController.this.routeInfoManager.scanNotActiveBroker();
@@ -88,7 +89,7 @@ public class NamesrvController {
         }, 5, 10, TimeUnit.SECONDS);
 
         this.scheduledExecutorService.scheduleAtFixedRate(new Runnable() {
-
+            //定时任务，nameServer每隔10分钟打印一次Kv配置
             @Override
             public void run() {
                 NamesrvController.this.kvConfigManager.printAllPeriodically();
@@ -115,7 +116,10 @@ public class NamesrvController {
 
     public void shutdown() {
         this.remotingServer.shutdown();
+        //remotingExecutor 是ExecutorService
         this.remotingExecutor.shutdown();
+        //  private final ScheduledExecutorService scheduledExecutorService = Executors.newSingleThreadScheduledExecutor(new ThreadFactoryImpl(
+        //        "NSScheduledThread"));
         this.scheduledExecutorService.shutdown();
     }
 
