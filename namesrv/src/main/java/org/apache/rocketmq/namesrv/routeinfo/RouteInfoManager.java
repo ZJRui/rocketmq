@@ -162,6 +162,7 @@ public class RouteInfoManager {
                     }
                 }
 
+                //NameServer 每隔10秒扫描brokerLiveTable状态表
                 BrokerLiveInfo prevBrokerLiveInfo = this.brokerLiveTable.put(brokerAddr,
                     new BrokerLiveInfo(
                         System.currentTimeMillis(),

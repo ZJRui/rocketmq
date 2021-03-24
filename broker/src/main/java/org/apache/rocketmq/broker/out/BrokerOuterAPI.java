@@ -109,6 +109,7 @@ public class BrokerOuterAPI {
         final int timeoutMills) {
         RegisterBrokerResult registerBrokerResult = null;
 
+        //获取所有的NameServer地址，Broker会向每一个NameServer注册
         List<String> nameServerAddressList = this.remotingClient.getNameServerAddressList();
         if (nameServerAddressList != null) {
             for (String namesrvAddr : nameServerAddressList) {
@@ -149,6 +150,7 @@ public class BrokerOuterAPI {
         requestHeader.setClusterName(clusterName);
         //master 地址，初次请求时该值为空，slave向nameServer注册后返回
         requestHeader.setHaServerAddr(haServerAddr);
+        //这个地方指定了请求的类型是 register_broker，那么NameServer如何处理该类型的请求呢？org.apache.rocketmq.namesrv.processor.DefaultRequestProcessor.processRequest
         RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.REGISTER_BROKER, requestHeader);
 
         RegisterBrokerBody requestBody = new RegisterBrokerBody();
@@ -165,6 +167,7 @@ public class BrokerOuterAPI {
             return null;
         }
 
+        //
         RemotingCommand response = this.remotingClient.invokeSync(namesrvAddr, request, timeoutMills);
         assert response != null;
         switch (response.getCode()) {

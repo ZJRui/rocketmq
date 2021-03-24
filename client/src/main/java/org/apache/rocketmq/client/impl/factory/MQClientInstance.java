@@ -588,14 +588,18 @@ public class MQClientInstance {
     public boolean updateTopicRouteInfoFromNameServer(final String topic, boolean isDefault,
         DefaultMQProducer defaultMQProducer) {
         try {
+            //尝试获取锁
             if (this.lockNamesrv.tryLock(LOCK_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)) {
                 try {
                     TopicRouteData topicRouteData;
+                    //isDefault 为true 使用默认主题查询，如果查询到路由信息，则替换路由信息中读写队列个数为生产者默认的队列个数
                     if (isDefault && defaultMQProducer != null) {
+                        //为什么这里使用了 createTopicKey？  上面不是传递了topic吗
                         topicRouteData = this.mQClientAPIImpl.getDefaultTopicRouteInfoFromNameServer(defaultMQProducer.getCreateTopicKey(),
                             1000 * 3);
                         if (topicRouteData != null) {
                             for (QueueData data : topicRouteData.getQueueDatas()) {
+                                //defaultTopicQueue=4，每一个topic队列的个数。 读队列的个数
                                 int queueNums = Math.min(defaultMQProducer.getDefaultTopicQueueNums(), data.getReadQueueNums());
                                 data.setReadQueueNums(queueNums);
                                 data.setWriteQueueNums(queueNums);
@@ -661,6 +665,7 @@ public class MQClientInstance {
                     this.lockNamesrv.unlock();
                 }
             } else {
+                //获取锁失败
                 log.warn("updateTopicRouteInfoFromNameServer tryLock timeout {}ms", LOCK_TIMEOUT_MILLIS);
             }
         } catch (InterruptedException e) {
