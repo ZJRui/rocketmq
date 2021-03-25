@@ -128,7 +128,23 @@ public class MQClientInstance {
         this.nettyClientConfig = new NettyClientConfig();
         this.nettyClientConfig.setClientCallbackExecutorThreads(clientConfig.getClientCallbackExecutorThreads());
         this.nettyClientConfig.setUseTLS(clientConfig.isUseTLS());
+        /**
+         *
+         在这个地方创建了一个ClientRemotingProcessor 作为NettyRequestProcessor。NettyRequestProcessor是一个接口
+         对象。存在processRequest方法。ClientRemotingProcessor的processRequest中定义了如何处理request。
+
+         那么这个请求是从哪里来的呢？
+         首先是ChannelHandler接收到数据，这个在NettyRemotingServer的NettyServerHandler类中的changeRead0方法中调用了 processMessageReceived(ctx, msg);
+
+         在processMessageReceived内部会创建一个Runnable对象，这个Runnable对象的run方法中就会调用ClientRemotingProcessor的processRequest方法（org.apache.rocketmq.remoting.netty.NettyRemotingAbstract#processRequestCommand）
+         在processRequestCommand方法内部创建完Runnable对象之后 创建一个RequestTask，这个RequestTask持有了Runnable，同时这个RequestTask本身也是一个Runnable
+         在RequestTask的run方法内部会调用它接收到的Runnable对象的run方法，从而触发ClientRemotingProcessor的processRequest执行
+         */
         this.clientRemotingProcessor = new ClientRemotingProcessor(this);
+        /**
+         * 这里创建了MQClientAPIImpl，这个类有什么作用呢？  mQClientFactory.start(); 会启动Netty。
+         * 也就是他的start方法会 导致NettyRemotingClient 的start方法执行，同时他内部注册了多个Processor
+         */
         this.mQClientAPIImpl = new MQClientAPIImpl(this.nettyClientConfig, this.clientRemotingProcessor, rpcHook, clientConfig);
 
         if (this.clientConfig.getNamesrvAddr() != null) {
@@ -230,7 +246,7 @@ public class MQClientInstance {
                     if (null == this.clientConfig.getNamesrvAddr()) {
                         this.mQClientAPIImpl.fetchNameServerAddr();
                     }
-                    // Start request-response channel
+                    // Start request-response channel。 启动Netty
                     this.mQClientAPIImpl.start();
                     // Start various schedule tasks
                     this.startScheduledTask();

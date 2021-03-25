@@ -58,7 +58,12 @@ public class DefaultMQProducer extends ClientConfig implements MQProducer {
 
     /**
      * Wrapping internal implementations for virtually all methods presented in this class.
+     * 为这个类中呈现的几乎所有方法包装内部实现。
+     * 为什么明明是一个DefaultMQProducer 内部却要使用DefaultMQProducer
+     * 两者之间有什么关系呢？
+     *  构造器中创建DefaultMQProducer的时候就创建了DefaultMQProducerImpl对象
      */
+
     protected final transient DefaultMQProducerImpl defaultMQProducerImpl;
 
     /**
@@ -121,6 +126,7 @@ public class DefaultMQProducer extends ClientConfig implements MQProducer {
 
     /**
      * Default constructor.
+     * 问题：生产者的生产者组有什么作用 ？我们知道消费者的消费者组的作用
      */
     public DefaultMQProducer() {
         this(MixAll.DEFAULT_PRODUCER_GROUP, null);
@@ -134,6 +140,7 @@ public class DefaultMQProducer extends ClientConfig implements MQProducer {
      */
     public DefaultMQProducer(final String producerGroup, RPCHook rpcHook) {
         this.producerGroup = producerGroup;
+        //注意这里创建DefaultMQProducer的时候就创建了DefaultMQProducerImpl对象
         defaultMQProducerImpl = new DefaultMQProducerImpl(this, rpcHook);
     }
 

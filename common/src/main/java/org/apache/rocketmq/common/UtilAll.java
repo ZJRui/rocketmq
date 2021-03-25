@@ -16,6 +16,12 @@
  */
 package org.apache.rocketmq.common;
 
+import org.apache.rocketmq.common.constant.LoggerName;
+import org.apache.rocketmq.remoting.common.RemotingHelper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import javax.management.MBeanServer;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -28,20 +34,10 @@ import java.net.NetworkInterface;
 import java.text.NumberFormat;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
-import java.util.Calendar;
-import java.util.Date;
-import java.util.Enumeration;
-import java.util.Iterator;
-import java.util.Map;
+import java.util.*;
 import java.util.zip.CRC32;
 import java.util.zip.DeflaterOutputStream;
 import java.util.zip.InflaterInputStream;
-
-import org.apache.rocketmq.common.constant.LoggerName;
-import org.apache.rocketmq.remoting.common.RemotingHelper;
-
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 public class UtilAll {
     private static final Logger log = LoggerFactory.getLogger(LoggerName.COMMON_LOGGER_NAME);
@@ -51,6 +47,13 @@ public class UtilAll {
     public static final String YYYYMMDDHHMMSS = "yyyyMMddHHmmss";
     final static char[] HEX_ARRAY = "0123456789ABCDEF".toCharArray();
 
+
+    public MBeanServer getObject() throws Exception {
+        return ManagementFactory.getPlatformMBeanServer();
+    }
+
+
+    //获取进程的PID
     public static int getPid() {
         RuntimeMXBean runtime = ManagementFactory.getRuntimeMXBean();
         String name = runtime.getName(); // format: "pid@hostname"
@@ -61,6 +64,7 @@ public class UtilAll {
         }
     }
 
+    //获取当前调用栈
     public static String currentStackTrace() {
         StringBuilder sb = new StringBuilder();
         StackTraceElement[] stackTrace = Thread.currentThread().getStackTrace();
@@ -107,8 +111,8 @@ public class UtilAll {
         Calendar cal = Calendar.getInstance();
         cal.setTimeInMillis(t);
         return String.format("%04d%02d%02d%02d%02d%02d%03d", cal.get(Calendar.YEAR), cal.get(Calendar.MONTH) + 1,
-            cal.get(Calendar.DAY_OF_MONTH), cal.get(Calendar.HOUR_OF_DAY), cal.get(Calendar.MINUTE), cal.get(Calendar.SECOND),
-            cal.get(Calendar.MILLISECOND));
+                cal.get(Calendar.DAY_OF_MONTH), cal.get(Calendar.HOUR_OF_DAY), cal.get(Calendar.MINUTE), cal.get(Calendar.SECOND),
+                cal.get(Calendar.MILLISECOND));
     }
 
     public static long computNextMorningTimeMillis() {
@@ -163,25 +167,25 @@ public class UtilAll {
         Calendar cal = Calendar.getInstance();
         cal.setTimeInMillis(t);
         return String.format("%04d-%02d-%02d %02d:%02d:%02d,%03d",
-            cal.get(Calendar.YEAR),
-            cal.get(Calendar.MONTH) + 1,
-            cal.get(Calendar.DAY_OF_MONTH),
-            cal.get(Calendar.HOUR_OF_DAY),
-            cal.get(Calendar.MINUTE),
-            cal.get(Calendar.SECOND),
-            cal.get(Calendar.MILLISECOND));
+                cal.get(Calendar.YEAR),
+                cal.get(Calendar.MONTH) + 1,
+                cal.get(Calendar.DAY_OF_MONTH),
+                cal.get(Calendar.HOUR_OF_DAY),
+                cal.get(Calendar.MINUTE),
+                cal.get(Calendar.SECOND),
+                cal.get(Calendar.MILLISECOND));
     }
 
     public static String timeMillisToHumanString3(final long t) {
         Calendar cal = Calendar.getInstance();
         cal.setTimeInMillis(t);
         return String.format("%04d%02d%02d%02d%02d%02d",
-            cal.get(Calendar.YEAR),
-            cal.get(Calendar.MONTH) + 1,
-            cal.get(Calendar.DAY_OF_MONTH),
-            cal.get(Calendar.HOUR_OF_DAY),
-            cal.get(Calendar.MINUTE),
-            cal.get(Calendar.SECOND));
+                cal.get(Calendar.YEAR),
+                cal.get(Calendar.MONTH) + 1,
+                cal.get(Calendar.DAY_OF_MONTH),
+                cal.get(Calendar.HOUR_OF_DAY),
+                cal.get(Calendar.MINUTE),
+                cal.get(Calendar.SECOND));
     }
 
     public static double getDiskPartitionSpaceUsedPercent(final String path) {
@@ -374,6 +378,7 @@ public class UtilAll {
         return true;
     }
 
+    //jstack命令
     public static String jstack() {
         return jstack(Thread.getAllStackTraces());
     }
@@ -402,6 +407,7 @@ public class UtilAll {
         return result.toString();
     }
 
+    //检测是否是否内网ip
     public static boolean isInternalIP(byte[] ip) {
         if (ip.length != 4) {
             throw new RuntimeException("illegal ipv4 bytes");
@@ -461,15 +467,17 @@ public class UtilAll {
         return false;
     }
 
+    //
     public static String ipToIPv4Str(byte[] ip) {
         if (ip.length != 4) {
             return null;
         }
         return new StringBuilder().append(ip[0] & 0xFF).append(".").append(
-            ip[1] & 0xFF).append(".").append(ip[2] & 0xFF)
-            .append(".").append(ip[3] & 0xFF).toString();
+                ip[1] & 0xFF).append(".").append(ip[2] & 0xFF)
+                .append(".").append(ip[3] & 0xFF).toString();
     }
 
+    //获取系统IP
     public static byte[] getIP() {
         try {
             Enumeration allNetInterfaces = NetworkInterface.getNetworkInterfaces();
@@ -477,10 +485,14 @@ public class UtilAll {
             byte[] internalIP = null;
             while (allNetInterfaces.hasMoreElements()) {
                 NetworkInterface netInterface = (NetworkInterface) allNetInterfaces.nextElement();
+                //Interface 拿到address，然后可能有多个地址
                 Enumeration addresses = netInterface.getInetAddresses();
                 while (addresses.hasMoreElements()) {
                     ip = (InetAddress) addresses.nextElement();
                     if (ip != null && ip instanceof Inet4Address) {
+                        //*返回这个{@code InetAddress}的原始IP地址
+                        //*对象。结果是网络字节顺序:最高顺序
+                        //地址的*字节在{@code getAddress()[0]}中。
                         byte[] ipByte = ip.getAddress();
                         if (ipByte.length == 4) {
                             if (ipCheck(ipByte)) {
@@ -504,6 +516,7 @@ public class UtilAll {
         }
     }
 
+    //删除文件
     public static void deleteFile(File file) {
         if (!file.exists()) {
             return;
@@ -517,5 +530,12 @@ public class UtilAll {
             }
             file.delete();
         }
+    }
+
+    public static void main(String[] args) {
+
+        //System.out.println(ipToIPv4Str(getIP()));
+        System.out.println(jstack());
+
     }
 }

@@ -48,6 +48,16 @@ public class ClientConfig {
 
     private boolean useTLS = TlsSystemConfig.tlsEnable;
 
+    /**
+     * cleintId为客户端Ip+instance+unitname可选
+     * instance默认为default：  private String instanceName = System.getProperty("rocketmq.client.name", "DEFAULT");
+     * 如果instance为默认值default的话那么就将pid作为instance，这个逻辑在changeInstanceNameToPID
+     * 因此同一个JVM中不同的消费者、不同生产者在启动时获取到的MQClientInstance实例都是同一个。
+     * 使用进程ID作为Instancename可以处理同一台服务器上部署两个应用程序的问题。
+     * MQClientInstance封装了RocketMQ网络处理API
+     *
+     * @return
+     */
     public String buildMQClientId() {
         StringBuilder sb = new StringBuilder();
         sb.append(this.getClientIP());
@@ -79,6 +89,7 @@ public class ClientConfig {
     }
 
     public void changeInstanceNameToPID() {
+        //如果instance为默认值的话就键gpid作为instance
         if (this.instanceName.equals("DEFAULT")) {
             this.instanceName = String.valueOf(UtilAll.getPid());
         }
@@ -189,9 +200,9 @@ public class ClientConfig {
     @Override
     public String toString() {
         return "ClientConfig [namesrvAddr=" + namesrvAddr + ", clientIP=" + clientIP + ", instanceName=" + instanceName
-            + ", clientCallbackExecutorThreads=" + clientCallbackExecutorThreads + ", pollNameServerInterval=" + pollNameServerInterval
-            + ", heartbeatBrokerInterval=" + heartbeatBrokerInterval + ", persistConsumerOffsetInterval="
-            + persistConsumerOffsetInterval + ", unitMode=" + unitMode + ", unitName=" + unitName + ", vipChannelEnabled="
-            + vipChannelEnabled + ", useTLS=" + useTLS + "]";
+                + ", clientCallbackExecutorThreads=" + clientCallbackExecutorThreads + ", pollNameServerInterval=" + pollNameServerInterval
+                + ", heartbeatBrokerInterval=" + heartbeatBrokerInterval + ", persistConsumerOffsetInterval="
+                + persistConsumerOffsetInterval + ", unitMode=" + unitMode + ", unitName=" + unitName + ", vipChannelEnabled="
+                + vipChannelEnabled + ", useTLS=" + useTLS + "]";
     }
 }
