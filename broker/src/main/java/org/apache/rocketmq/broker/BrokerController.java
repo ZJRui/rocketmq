@@ -887,6 +887,10 @@ public class BrokerController {
             this.registerBrokerAll(true, false, true);
         }
 
+        /**
+         * Broker端心跳包发送，每隔30向集群中所有的NameServer发送心跳包。NameServer收到Broker心跳包会更新brokerLiveTable缓存中BrokerLiveInfo的lastUpdateTimestamp
+         * NameServer每隔10s扫描BrokerLiveTable，如果连续120s没有收到心跳包，nameServer将移除该Broker的路由信息同时关闭Socket连接
+         */
         this.scheduledExecutorService.scheduleAtFixedRate(new Runnable() {
 
             @Override
@@ -929,6 +933,13 @@ public class BrokerController {
     }
 
     public synchronized void registerBrokerAll(final boolean checkOrderConfig, boolean oneway, boolean forceRegister) {
+        /**
+         * 问题：该方法主要实现的逻辑是Broker向所有的NameServer发送心跳信息， 应该不会涉及topic的问题。
+         *
+         * 这里为什么要创建topicConfigWrapper
+         *
+         * 创建一个TopicConfigWrapper， 包含 所有的topic和其topicConfig
+         */
         TopicConfigSerializeWrapper topicConfigWrapper = this.getTopicConfigManager().buildTopicConfigSerializeWrapper();
 
         if (!PermName.isWriteable(this.getBrokerConfig().getBrokerPermission())

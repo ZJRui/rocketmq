@@ -40,6 +40,7 @@ import org.apache.rocketmq.common.topic.TopicValidator;
 import org.apache.rocketmq.logging.InternalLogger;
 import org.apache.rocketmq.logging.InternalLoggerFactory;
 
+
 public class TopicConfigManager extends ConfigManager {
     private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.BROKER_LOGGER_NAME);
     private static final long LOCK_TIMEOUT_MILLIS = 3000;
@@ -421,6 +422,12 @@ public class TopicConfigManager extends ConfigManager {
     }
 
     public TopicConfigSerializeWrapper buildTopicConfigSerializeWrapper() {
+        /**
+         * TopicConfigWrapper 内部封装的是topicConfigManager中的topicConfigTable,内存存储的是Broker启动时默认的一些Topic,MixAll.self_test_topic
+         * mixAll.default_topic (AutoCreateTopicEnable=true)
+         *
+         * Broker中topic默认存储在${rokcet_home}/store/config/topic.json中
+         */
         TopicConfigSerializeWrapper topicConfigSerializeWrapper = new TopicConfigSerializeWrapper();
         topicConfigSerializeWrapper.setTopicConfigTable(this.topicConfigTable);
         topicConfigSerializeWrapper.setDataVersion(this.dataVersion);

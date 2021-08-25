@@ -608,7 +608,16 @@ public class MQClientInstance {
             if (this.lockNamesrv.tryLock(LOCK_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)) {
                 try {
                     TopicRouteData topicRouteData;
+                    /**
+                     * isDefault参数表示是否是默认的 producer，如果isDefault为true，且defaultMQProducer不为空
+                     */
                     if (isDefault && defaultMQProducer != null) {
+                        /**
+                         * 如果isDefault为true，则会执行getDefaultTopicRouteInfoFromNameServer。 否则将会执行getTopicRouteInfoFromNameServer
+                         * 从这里我们可以看到isDefaut为true，则会执行很多default操作。
+                         *
+                         * 注意这里 getDefaultTopic的时候 我们传入的topic key是defaultMQProducer.getCreateTopicKey()，这个返回值是 org.apache.rocketmq.common.topic.TopicValidator#AUTO_CREATE_TOPIC_KEY_TOPIC
+                         */
                         topicRouteData = this.mQClientAPIImpl.getDefaultTopicRouteInfoFromNameServer(defaultMQProducer.getCreateTopicKey(),
                             1000 * 3);
                         if (topicRouteData != null) {

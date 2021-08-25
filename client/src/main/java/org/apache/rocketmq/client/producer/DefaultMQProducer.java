@@ -54,6 +54,10 @@ import org.apache.rocketmq.remoting.exception.RemotingException;
  *
  * <p> <strong>Thread Safety:</strong> After configuring and starting process, this class can be regarded as thread-safe
  * and used among multiple threads context. </p>
+ *
+ * 这个类是打算发送消息的应用程序的入口点。调优公开getter/setter方法的字段没有问题，但请记住，对于大多数场景，所有这些字段都应该能正常工作。
+ * 这个类聚合各种发送方法来将消息传递给代理。每一种都有利弊;在编写代码之前，您最好了解它们的优缺点。
+ * 线程安全:在配置和启动进程之后，这个类可以被认为是线程安全的，并在多个线程上下文中使用。
  */
 public class DefaultMQProducer extends ClientConfig implements MQProducer {
 

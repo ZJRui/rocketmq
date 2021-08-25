@@ -688,15 +688,33 @@ public class DefaultMQProducerImpl implements MQProducerInner {
 
     private TopicPublishInfo tryToFindTopicPublishInfo(final String topic) {
         TopicPublishInfo topicPublishInfo = this.topicPublishInfoTable.get(topic);
+        /**
+         * ok方法内会判断 topic的messageQueueList是否为null或者size=0，如果为空则ok返回false
+         */
         if (null == topicPublishInfo || !topicPublishInfo.ok()) {
+            /**
+             * 如果topicPublishInfo==null或者其中的MessageQueueList为空则 创建一个新的TopicPublishInfo
+             */
             this.topicPublishInfoTable.putIfAbsent(topic, new TopicPublishInfo());
+
+            /**
+             * 查询topic
+             */
             this.mQClientFactory.updateTopicRouteInfoFromNameServer(topic);
             topicPublishInfo = this.topicPublishInfoTable.get(topic);
         }
 
+        /**
+         * 如果上面 没有查询到topic，则会导致 执行下面的else，下面的else 会执行 updateTopicRouteInfoFromNameServer
+         * 但是传入的参数是 isDefault为true， 同时传入了defaultMQProducer，
+         * 在真正查询topic的时候查询的是 defaultMQProducer.getCreateTopicKey() 这个返回值是 org.apache.rocketmq.common.topic.TopicValidator#AUTO_CREATE_TOPIC_KEY_TOPIC
+         */
         if (topicPublishInfo.isHaveTopicRouterInfo() || topicPublishInfo.ok()) {
             return topicPublishInfo;
         } else {
+            /**
+             * 这个参数中的true 表示isDefault，如果该参数为true，我们会传入一个defaultMqProducer
+             */
             this.mQClientFactory.updateTopicRouteInfoFromNameServer(topic, true, this.defaultMQProducer);
             topicPublishInfo = this.topicPublishInfoTable.get(topic);
             return topicPublishInfo;

@@ -48,11 +48,42 @@ import org.apache.rocketmq.remoting.common.RemotingUtil;
 public class RouteInfoManager {
     private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.NAMESRV_LOGGER_NAME);
     private final static long BROKER_CHANNEL_EXPIRED_TIME = 1000 * 60 * 2;
+    /**
+     * 路由表的注册需要加写锁，防止并发修改路由表，比如注册Broker的时候需要判断Broker所属集群是否存在，如果不存在则创建集群，然后将broker加入到集群的Broker集合中
+     *
+     */
     private final ReadWriteLock lock = new ReentrantReadWriteLock();
+    /**
+     * Topic消息队列路由信息，消息发送时根据路由表进行负载均衡。
+     *
+     *  具体topicQueueTable和brokerAddrTable的运行时数据结构可以参考右侧 图片
+     */
     private final HashMap<String/* topic */, List<QueueData>> topicQueueTable;
+    /**
+     * broker 基础信息，包含brokerName,所属集群名称、主备Broker地址
+     * 多个Broker组成一个集群，BrokerName由相同的多台Broker组成Master-slave架构，brokerId为0代表master，大于0代表Slave。
+     *
+     * 也就是说一个BrokerName 可以有多个Broker节点，这些节点的brokerName是相同的，但是brokerId是不同的，因此我们在BrokerData中看到了brokerAddrs结构
+     */
     private final HashMap<String/* brokerName */, BrokerData> brokerAddrTable;
+    /**
+     * Broker集群信息，存储集群中的所有Broker名称
+     *
+     */
     private final HashMap<String/* clusterName */, Set<String/* brokerName */>> clusterAddrTable;
+    /**
+     * Broker 状态信息，NameServer每次收到心跳包都会替换该信息
+     *
+     * RocketMQ基于定于发布机制，一个topic拥有多个消息队列。
+     * 一个Broker为每一主题默认创建4个读队列4个写队列。 问题：如果一个topic要是有三个broker，则有12个队列？
+     * 多个Broker组成一个集群，BrokerName由相同的多台Broker组成Master-slave架构，brokerId为0代表master，大于0代表Slave。
+     * BrokerLiveInfo中的lastUpdateTimestamp存储上次收到Broker心跳包的时间
+     *
+     */
     private final HashMap<String/* brokerAddr */, BrokerLiveInfo> brokerLiveTable;
+    /**
+     * Broker上的filterServer列表，用于类模式消息过滤
+     */
     private final HashMap<String/* brokerAddr */, List<String>/* Filter Server */> filterServerTable;
 
     public RouteInfoManager() {
@@ -111,8 +142,19 @@ public class RouteInfoManager {
         RegisterBrokerResult result = new RegisterBrokerResult();
         try {
             try {
+                /**
+                 * 路由表的注册需要加写锁，防止并发修改RouteInfoManager中的路由表。
+                 *
+                 */
                 this.lock.writeLock().lockInterruptibly();
 
+                /**
+                 * 首先判断Broker所在的集群是否存在，如果不存在则创建，然后将Broker加入到集群Broker列表中。
+                 *
+                 * 从这里我们可以看到对于集群来说 他关心的并不是这个集群中有多少个Broker节点，而是关心有多少个BrokerName
+                 *
+                 * 每一个BrokerName内构成一主多从结构。
+                 */
                 Set<String> brokerNames = this.clusterAddrTable.get(clusterName);
                 if (null == brokerNames) {
                     brokerNames = new HashSet<String>();
@@ -120,8 +162,16 @@ public class RouteInfoManager {
                 }
                 brokerNames.add(brokerName);
 
+                /**
+                 * 记录该broker是否是第一次注册。第一次注册的判断条件就是
+                 * 该Broker 对应的BrokerName的BrokerData中  没有该BrokerId的broker
+                 */
                 boolean registerFirst = false;
 
+                /**
+                 * 获取到这个指定的BrokerName对应的 主从架构中的Broker信息
+                 *
+                 */
                 BrokerData brokerData = this.brokerAddrTable.get(brokerName);
                 if (null == brokerData) {
                     registerFirst = true;
@@ -131,21 +181,40 @@ public class RouteInfoManager {
                 Map<Long, String> brokerAddrsMap = brokerData.getBrokerAddrs();
                 //Switch slave to master: first remove <1, IP:PORT> in namesrv, then add <0, IP:PORT>
                 //The same IP:PORT must only have one record in brokerAddrTable
+                /**
+                 * //从机切换到主机:首先移除IP:PORT&gt;在namesrv中添加&lt;0, IP:PORT&gt;//相同的IP:PORT在brokerAddrTable中只能有一条记录
+                 */
                 Iterator<Entry<Long, String>> it = brokerAddrsMap.entrySet().iterator();
                 while (it.hasNext()) {
                     Entry<Long, String> item = it.next();
+                    /**
+                     * 如果新添加的Broker 的brokerAddr 已经在 brokerData中且这个Broker的brokerId 与BrokerData中对应的数据的brokerId不同则移除。
+                     */
                     if (null != brokerAddr && brokerAddr.equals(item.getValue()) && brokerId != item.getKey()) {
                         it.remove();
                     }
                 }
 
+                /**
+                 * 将brokerId和brokerAddr放置到brokerData中，如果brokerData中未曾有过该brokerId则表示第一次注册。
+                 */
                 String oldAddr = brokerData.getBrokerAddrs().put(brokerId, brokerAddr);
                 registerFirst = registerFirst || (null == oldAddr);
 
                 if (null != topicConfigWrapper
                     && MixAll.MASTER_ID == brokerId) {
+                    /**
+                     * 如果brokerid为0，表示master节点，并且Broker Topic配置信息发生变化或者是初次注册
+                     */
                     if (this.isBrokerTopicConfigChanged(brokerAddr, topicConfigWrapper.getDataVersion())
                         || registerFirst) {
+                        /**
+                         * 如果brokerid为0，表示master节点，并且Broker Topic配置信息发生变化或者是初次注册 ，则需要创建或者更新topic路由元数据，填充topicQueueTable。
+                         * 其实就是为默认主题自动注册路由信息，其中包含mixAll.default_topic的路由信息。当消息生产者发送主题时，如果该主题未创建并且brokerconfig的autoCreateTopicEnable为true，
+                         * 将返回Default_topic的路由信息。
+                         *
+                         * 将所有的topic在这个Broker上创建。
+                         */
                         ConcurrentMap<String, TopicConfig> tcTable =
                             topicConfigWrapper.getTopicConfigTable();
                         if (tcTable != null) {
@@ -215,6 +284,10 @@ public class RouteInfoManager {
     }
 
     private void createAndUpdateQueueData(final String brokerName, final TopicConfig topicConfig) {
+        /**
+         * 为这个BrokerName 创建一个QueueData
+         *
+         */
         QueueData queueData = new QueueData();
         queueData.setBrokerName(brokerName);
         queueData.setWriteQueueNums(topicConfig.getWriteQueueNums());
@@ -222,6 +295,9 @@ public class RouteInfoManager {
         queueData.setPerm(topicConfig.getPerm());
         queueData.setTopicSynFlag(topicConfig.getTopicSysFlag());
 
+        /**
+         * 注意这里是根据topicName获取该Topic的QueueDataList
+         */
         List<QueueData> queueDataList = this.topicQueueTable.get(topicConfig.getTopicName());
         if (null == queueDataList) {
             queueDataList = new LinkedList<QueueData>();
@@ -231,6 +307,17 @@ public class RouteInfoManager {
         } else {
             boolean addNewOne = true;
 
+            /**
+             * 在所有的 QUeueDataList中寻找brokerName等于当前BrokerName的queueData
+             *
+             * 那么也就是说 一个Topic 针对一个BrokerName 有一个QueueData。
+             *
+             * 也就是说当我们新增一个Broker节点的时候，我们要看这个Broker节点的BrokerName是什么，如果这个brokerName已经存在了，那么并不会将这个新创建的QueueData放入到queueDataList中
+             *
+             * 如果这个BrokerName是一个新的则将创建的QueueData放入到queueDataList中。
+             *
+             *
+             */
             Iterator<QueueData> it = queueDataList.iterator();
             while (it.hasNext()) {
                 QueueData qd = it.next();

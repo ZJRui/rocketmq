@@ -23,6 +23,9 @@ public class TopicConfig {
     public static int defaultReadQueueNums = 16;
     public static int defaultWriteQueueNums = 16;
     private String topicName;
+    /**
+     * 怎么这里的读写队列都变成了16个？
+     */
     private int readQueueNums = defaultReadQueueNums;
     private int writeQueueNums = defaultWriteQueueNums;
     private int perm = PermName.PERM_READ | PermName.PERM_WRITE;
