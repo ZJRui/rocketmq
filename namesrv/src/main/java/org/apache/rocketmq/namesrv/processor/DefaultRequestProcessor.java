@@ -93,6 +93,17 @@ public class DefaultRequestProcessor extends AsyncNettyRequestProcessor implemen
                 if (brokerVersion.ordinal() >= MQVersion.Version.V3_0_11.ordinal()) {
                     return this.registerBrokerWithFilterServer(ctx, request);
                 } else {
+                    /**
+                     * 注意这里将ctx  ChannelHandlerContext 向下传递，也就是socket连接
+                     * 因为这个类所在的模块时 nameserver， 实际上这个ctx 也就代表着 Broker的socket链接，
+                     * 这ctx最终会保存到BrokerLiveInfo，实际上是通过ctx得到了channel
+                     *
+                     * 也就是说NameServer与Broker保持长连接，Broker状态存储在看brokerLiveTable中，nameServer没收到一个心跳包 将更新BrokerLiveTable中关于Broker的状态信息及
+                     * 路由表（topicQueueTable,borkerAddrTable, brokerLiveTable, filterServerTable）更新上述路由表使用了粒度较少的读写锁，允许多个消息发送者Producer并发读，保证消息发送
+                     * 时的高并发。单同一时刻NameServer只处理一个Broker心跳包，多个心跳包请求串行执行。
+                     *
+                     *
+                     */
                     return this.registerBroker(ctx, request);
                 }
             case RequestCode.UNREGISTER_BROKER:

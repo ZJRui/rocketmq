@@ -146,6 +146,17 @@ public class RouteInfoManager {
                  * 路由表的注册需要加写锁，防止并发修改RouteInfoManager中的路由表。
                  *
                  */
+                /**
+                 * 注意这里将ctx  ChannelHandlerContext 向下传递，也就是socket连接
+                 * 因为这个类所在的模块时 nameserver， 实际上这个ctx 也就代表着 Broker的socket链接，
+                 * 这ctx最终会保存到BrokerLiveInfo，实际上是通过ctx得到了channel
+                 *
+                 * 也就是说NameServer与Broker保持长连接，Broker状态存储在看brokerLiveTable中，nameServer没收到一个心跳包 将更新BrokerLiveTable中关于Broker的状态信息及
+                 * 路由表（topicQueueTable,borkerAddrTable, brokerLiveTable, filterServerTable）更新上述路由表使用了粒度较少的读写锁，允许多个消息发送者Producer并发读，保证消息发送
+                 * 时的高并发。单同一时刻NameServer只处理一个Broker心跳包，多个心跳包请求串行执行。
+                 *
+                 *
+                 */
                 this.lock.writeLock().lockInterruptibly();
 
                 /**
@@ -235,6 +246,9 @@ public class RouteInfoManager {
                     log.info("new broker registered, {} HAServer: {}", brokerAddr, haServerAddr);
                 }
 
+                /**
+                 * 注册Broker的过滤器Server地址列表。一个Broker上会关联多个FilterServer消息过滤服务器
+                 */
                 if (filterServerList != null) {
                     if (filterServerList.isEmpty()) {
                         this.filterServerTable.remove(brokerAddr);
@@ -519,7 +533,13 @@ public class RouteInfoManager {
             Entry<String, BrokerLiveInfo> next = it.next();
             long last = next.getValue().getLastUpdateTimestamp();
             if ((last + BROKER_CHANNEL_EXPIRED_TIME) < System.currentTimeMillis()) {
+                /**
+                 * 关闭与Broker的链接channel
+                 */
                 RemotingUtil.closeChannel(next.getValue().getChannel());
+                /**
+                 * 这里将 Broker活跃信息从brokerLiveTable 中移除
+                 */
                 it.remove();
                 log.warn("The broker channel expired, {} {}ms", next.getKey(), BROKER_CHANNEL_EXPIRED_TIME);
                 this.onChannelDestroy(next.getKey(), next.getValue().getChannel());
@@ -532,6 +552,40 @@ public class RouteInfoManager {
         if (channel != null) {
             try {
                 try {
+                    /**
+                     * 除非当前线程被中断，否则获取锁。
+                     * 如果锁可用，则获取锁并立即返回。
+                     * 如果锁不可用，那么当前线程将被禁用，以进行线程调度，并处于休眠状态，直到发生以下两种情况之一:
+                     * 当前线程获取锁;或
+                     * 其他一些线程中断当前线程，并且支持中断获取锁。
+                     * 如果当前线程:
+                     * 在进入该方法时设置中断状态;或
+                     * 在获取锁时中断，并且支持获取锁的中断，
+                     * 然后抛出InterruptedException，并清除当前线程的中断状态。
+                     * 实现注意事项
+                     * 在某些实现中，中断获取锁的能力可能是不可能的，如果可能的话，可能是开销很大的操作。程序员应该意识到这是可能的情况。实现应该在这种情况下进行文档记录。
+                     * 实现更倾向于响应中断而不是正常的方法返回。
+                     * Lock实现可能能够检测锁的错误使用，例如可能导致死锁的调用，并可能在这种情况下抛出(未检查的)异常。环境和异常类型必须由Lock实现记录。
+                     *
+                     *
+                     * ---------
+                     * lockInterruptibly 会抛出中断异常：InterruptedException ，但是这里内层并没有捕获该异常，外层会进行捕获处理
+                     *
+                     * QuestionA:  在这个方法的实现中， 为什么要在外面进行try catch  而不是
+                     *  try{
+                     *      lock.lockinterruptibly()
+                     *  }catch(){}
+                     *  finally{
+                     *      lock.unlock
+                     *  }
+                     *  参考：https://github.com/apache/rocketmq/issues/2814
+                     * answer: 事实上 unlock方法有可能会抛出异常，Yes, you were right about this. The unlock method will throw an Exception if current thread didn't obtain the lock, which means some exception happens when call the lock method.
+                     * Thank you for your replay.
+                     *
+                     *
+                     * lockInterruptibly的正确使用方式参考：https://github.com/alibaba/p3c/issues/287
+                     *
+                     */
                     this.lock.readLock().lockInterruptibly();
                     Iterator<Entry<String, BrokerLiveInfo>> itBrokerLiveTable =
                         this.brokerLiveTable.entrySet().iterator();
@@ -543,6 +597,11 @@ public class RouteInfoManager {
                         }
                     }
                 } finally {
+
+                    /**
+                     * 事实上 unlock方法有可能会抛出异常，Yes, you were right about this. The unlock method will throw an Exception if current thread didn't obtain the lock, which means some exception happens when call the lock method.
+                     *                      * Thank you for your replay.
+                     */
                     this.lock.readLock().unlock();
                 }
             } catch (Exception e) {

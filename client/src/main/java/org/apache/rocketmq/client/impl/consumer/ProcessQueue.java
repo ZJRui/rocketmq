@@ -186,6 +186,17 @@ public class ProcessQueue {
         long result = -1;
         final long now = System.currentTimeMillis();
         try {
+            /**
+             * 首先将 获取锁的逻辑放置在 try catch finally之外，如果放在try之内第一句，那么当 lock抛出异常的时候会去执行finally，我们在
+             * finally中进行了释放锁，但是实际上lock的时候并没有获取到锁而抛出异常。所以finally的unlock操作会抛出异常。
+             * 在lock的 unlock 方法说明中明确提出：unlock操作必须是获取到lock成功之后才可以执行，否则将会抛出IllegalMonitor异常。
+             *
+             * 考虑第二点： 如果将lock放置在try之外，lock本身是有异常声明的，可以抛出InterruptException，所以 如果对lock不进行try catch则需要在方法上声明抛出InterruptException
+             *
+             * 参考： https://github.com/alibaba/p3c/issues/287
+             * https://github.com/apache/rocketmq/issues/2814
+             *
+             */
             this.lockTreeMap.writeLock().lockInterruptibly();
             this.lastConsumeTimestamp = now;
             try {
