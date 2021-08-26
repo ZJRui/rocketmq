@@ -35,27 +35,93 @@ import org.apache.rocketmq.remoting.protocol.LanguageCode;
 public class ClientConfig {
     public static final String SEND_MESSAGE_WITH_VIP_CHANNEL_PROPERTY = "com.rocketmq.sendMessageWithVIPChannel";
     private String namesrvAddr = NameServerAddressUtils.getNameServerAddresses();
+    /**
+     * 配置说明：客户端IP
+     *
+     * 默认值：RemotingUtil.getLocalAddress()
+     *
+     *
+     *
+     * 这个值有两个用处：
+     *
+     * 对于默认的instanceName(见前面部分），如果没有显示设置，会使用ip+进程号，其中的ip便是这里的配置值
+     * 对于Producer发送消息的时候，消息本身会存储本值到bornHost，用于标记消息从哪台机器产生的
+     */
     private String clientIP = RemotingUtil.getLocalAddress();
+    /**
+     *
+     * 配置说明：客户端实例名称
+     *
+     * 默认值：从-D系统参数rocketmq.client.name获取，否则就是DEFAULT
+     *
+     *
+     * 这个值虽然默认写是DEFAULT，但在启动的时候，如果我们没有显示修改还是维持其DEFAULT的话，RocketMQ会更新为当前的进程号：
+     *
+     * public void changeInstanceNameToPID() {
+     *     if (this.instanceName.equals("DEFAULT")) {
+     *         this.instanceName = String.valueOf(UtilAll.getPid());
+     *     }
+     * }
+     * RocketMQ用一个叫ClientID的概念，来唯一标记一个客户端实例，一个客户端实例对于Broker而言会开辟一个Netty的客户端实例。
+     * 而ClientID是由ClientIP+InstanceName构成，故如果一个进程中多个实例（无论Producer还是Consumer）ClientIP和InstanceName都一样,他们将公用一个内部实例（同一套网络连接，线程资源等）
+     *
+     * 此外，此ClientID在对于Consumer负载均衡的时候起到唯一标识的作用，一旦多个实例（无论不同进程、不通机器、还是同一进程）的多个Consumer实例有一样的ClientID，负载均衡的时候必然RocketMQ任然会把两个实例当作一个client（因为同样一个clientID）。
+     *
+     * 故为了避免不必要的问题，ClientIP+instance Name的组合建议唯一，除非有意需要共用连接、资源。
+     *
+     *
+     *
+     * 注：如果一个进程内需要连接多个集群（不同NameServer）时候，必须要设置不同的instance name，否则会出现“窜乱”的现象，因为内部管理的时候，一个Client实例只能有一个NameServer的地址，例如：消费者C从自身团队A集群监听消息，然后又作为生产者P发送消息给另外一个团队管理的B集群，这时候新建C和P的时候，必须要显示设置不同的instanceName（建议标识中带上进程号），如下：
+     *
+     * consumer.setInstanceName("AConsumer"+UtilAll.getPid());
+     * ...
+     * producer.setInstanceName("BProducer"+UtilAll.getPid());
+     *
+     *
+     */
     private String instanceName = System.getProperty("rocketmq.client.name", "DEFAULT");
+    /**
+     * 配置说明：客户端通信层接收到网络请求的时候，处理器的核数
+     *
+     * 默认值： Runtime.getRuntime().availableProcessors()
+     *
+     *
+     * 虽然大部分指令的发起方是客户端而处理方是broker/NameServer端，但客户端有时候也需要处理远端对发送给自己的命令，最常见的是一些运维指令
+     * 如GET_CONSUMER_RUNNING_INFO，或者消费实例上线/下线的推送指令NOTIFY_CONSUMER_IDS_CHANGED，这些指令的处理都在一个线程池处理，clientCallbackExecutorThreads控制这个线程池的核数。
+     */
     private int clientCallbackExecutorThreads = Runtime.getRuntime().availableProcessors();
     protected String namespace;
     protected AccessChannel accessChannel = AccessChannel.LOCAL;
 
     /**
      * Pulling topic information interval from the named server
+     * 配置说明：轮询从NameServer获取路由信息的时间间隔
+     *
+     * 客户端依靠NameServer做服务发现（具体请看：RocketMQ原理（1）--服务端组件介绍 - 知乎专栏），这个间隔决定了新服务上线/下线，客户端最长多久能探测得到。默认是30秒，就是说如果做broker扩容，最长需要30秒客户端才能感知得到新broker的存在。
      */
     private int pollNameServerInterval = 1000 * 30;
     /**
      * Heartbeat interval in microseconds with message broker
+     * 配置说明：定期发送注册心跳到broker的间隔
+     *
+     客户端依靠心跳告诉broker“我是谁（clientID，ConsumerGroup/ProducerGroup）”，“自己是订阅了什么topic"，“要发送什么topic”。以此，broker会记录并维护这些信息。客户端如果动态更新这些信息，最长则需要这个心跳周期才能告诉broker。
      */
     private int heartbeatBrokerInterval = 1000 * 30;
     /**
      * Offset persistent interval for consumer
+     *
+     *配置说明：作用于Consumer，持久化消费进度的间隔
+     * RocketMQ采取的是定期批量ack的机制以持久化消费进度。也就是说每次消费消息结束后，并不会立刻ack，而是定期的集中的更新进度。
+     * 由于持久化不是立刻持久化的，所以如果消费实例突然退出（如断电）或者触发了负载均衡分consue queue重排，有可能会有已经消费过的消费进度没有及时更新而导致重新投递。故本配置值越小，重复的概率越低，但同时也会增加网络通信的负担。
      */
     private int persistConsumerOffsetInterval = 1000 * 5;
     private long pullTimeDelayMillsWhenException = 1000;
     private boolean unitMode = false;
     private String unitName;
+    /**
+     * 是否启用vip netty通道以发送消息
+     * broker的netty server会起两个通信服务。两个服务除了服务的端口号不一样，其他都一样。其中一个的端口（配置端口-2）作为vip通道，客户端可以启用本设置项把发送消息此vip通道。
+     */
     private boolean vipChannelEnabled = Boolean.parseBoolean(System.getProperty(SEND_MESSAGE_WITH_VIP_CHANNEL_PROPERTY, "false"));
 
     private boolean useTLS = TlsSystemConfig.tlsEnable;

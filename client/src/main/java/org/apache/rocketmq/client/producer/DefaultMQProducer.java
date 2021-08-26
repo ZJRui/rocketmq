@@ -65,6 +65,28 @@ public class DefaultMQProducer extends ClientConfig implements MQProducer {
      * Wrapping internal implementations for virtually all methods presented in this class.
      * 包装这个类中几乎所有方法的内部实现。
      */
+    /**
+     *
+     * 在项目中 手动创建一个Producer对象如下：  DefaultMQProducer producer = new DefaultMQProducer(producerGroup);
+     *
+     *  在DefaultMQProducer的构造器中会自动创建一个DefaultMQProducerImpl，同时DefaultMQProducer 会持有一个DefaultMQProducerImpl
+     *   public DefaultMQProducer(final String producerGroup, RPCHook rpcHook) {
+     *         this.producerGroup = producerGroup;
+     *         defaultMQProducerImpl = new DefaultMQProducerImpl(this, rpcHook);
+     *     }
+     *
+     * 在创建DefaultMQProducerImpl的时候 我们会将 外部的DefaultMQProducer 传递给DefaultMQProducerImpl
+     *
+     * 因此DefaultMQProducer 和DefaultMQProducerImpl 之间存在互相引用的关系
+     *
+     * 简单来说DefaultMQProducer 更像是一个配置信息， 我们通过this.defaultMQProducer.getProducerGroup() 就可以拿到ProducerGroup
+     *
+     * DefaultMQProducer是 RocketMQ暴露给应用程序使用的。 我们应用程序中 设置producer的属性就是通过DefaultMQProducer对外暴露的接口设置的。
+     * 比如 public class DefaultMQProducer extends ClientConfig implements MQProducer 继承自ClientConfig接口，对外暴露属性设置。同时实现了
+     * MQProducer接口，对外包里Producer的能力，但是其能力实际是委托给DefaultMQProducer内部的DefaultMQProducerImpl来试下你的
+     *
+     *
+     */
     protected final transient DefaultMQProducerImpl defaultMQProducerImpl;
     private final InternalLogger log = ClientLogger.getLog();
     /**
@@ -81,6 +103,24 @@ public class DefaultMQProducer extends ClientConfig implements MQProducer {
 
     /**
      * Just for testing or demo program
+     *
+     *
+     配置说明：发送消息的时候，如果没有找到topic，若想自动创建该topic，需要一个key topic，这个值即是key topic的值
+
+     默认值：TBW102
+
+     这是RocketMQ设计非常晦涩的一个概念，整体的逻辑是这样的：
+
+     生产者正常的发送消息，都是需要topic预先创建好的
+     但是RocketMQ服务端是支持，发送消息的时候，如果topic不存在，在发送的同时自动创建该topic
+     支持的前提是broker 的配置打开autoCreateTopicEnable=true
+     autoCreateTopicEnable=true后，broker会创建一个TBW102的topic，这个就是我们讲的默认的key topic
+     自动构建topic（以下简称T）的过程：
+
+     Producer发送的时候如果发现该T不存在，就会向配置有Producer配置的key topic的那个broker发送消息
+     broker校验客户端的topic key是否在broker存在，且校验其权限最后一位是否是1（topic权限总共有3位，按位存储，分别是读、写、支持自动创建）
+     若权限校验通过，先在该broker把T创建，并且权限就是key topic除去最后一位的权限。
+     *
      */
     private String createTopicKey = TopicValidator.AUTO_CREATE_TOPIC_KEY_TOPIC;
 
@@ -957,7 +997,6 @@ public class DefaultMQProducer extends ClientConfig implements MQProducer {
 
     /**
      * Sets an Executor to be used for executing callback methods. If the Executor is not set, {@link
-     * NettyRemotingClient#publicExecutor} will be used.
      *
      * @param callbackExecutor the instance of Executor
      */
@@ -967,7 +1006,6 @@ public class DefaultMQProducer extends ClientConfig implements MQProducer {
 
     /**
      * Sets an Executor to be used for executing asynchronous send. If the Executor is not set, {@link
-     * DefaultMQProducerImpl#defaultAsyncSenderExecutor} will be used.
      *
      * @param asyncSenderExecutor the instance of Executor
      */

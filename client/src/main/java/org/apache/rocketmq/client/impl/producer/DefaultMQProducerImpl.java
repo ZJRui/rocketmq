@@ -94,9 +94,34 @@ import org.apache.rocketmq.remoting.exception.RemotingException;
 import org.apache.rocketmq.remoting.exception.RemotingTimeoutException;
 import org.apache.rocketmq.remoting.exception.RemotingTooMuchRequestException;
 
+/**
+ *
+ */
 public class DefaultMQProducerImpl implements MQProducerInner {
     private final InternalLogger log = ClientLogger.getLog();
     private final Random random = new Random();
+    /**
+     *
+     * 在项目中 手动创建一个Producer对象如下：  DefaultMQProducer producer = new DefaultMQProducer(producerGroup);
+     *
+     *  在DefaultMQProducer的构造器中会自动创建一个DefaultMQProducerImpl，同时DefaultMQProducer 会持有一个DefaultMQProducerImpl
+     *   public DefaultMQProducer(final String producerGroup, RPCHook rpcHook) {
+     *         this.producerGroup = producerGroup;
+     *         defaultMQProducerImpl = new DefaultMQProducerImpl(this, rpcHook);
+     *     }
+     *
+     * 在创建DefaultMQProducerImpl的时候 我们会将 外部的DefaultMQProducer 传递给DefaultMQProducerImpl
+     *
+     * 因此DefaultMQProducer 和DefaultMQProducerImpl 之间存在互相引用的关系
+     *
+     * 简单来说DefaultMQProducer 更像是一个配置信息， 我们通过this.defaultMQProducer.getProducerGroup() 就可以拿到ProducerGroup
+     *
+     * DefaultMQProducer是 RocketMQ暴露给应用程序使用的。 我们应用程序中 设置producer的属性就是通过DefaultMQProducer对外暴露的接口设置的。
+     * 比如 public class DefaultMQProducer extends ClientConfig implements MQProducer 继承自ClientConfig接口，对外暴露属性设置。同时实现了
+     * MQProducer接口，对外包里Producer的能力，但是其能力实际是委托给DefaultMQProducer内部的DefaultMQProducerImpl来试下你的
+     *
+     *
+     */
     private final DefaultMQProducer defaultMQProducer;
     private final ConcurrentMap<String/* topic */, TopicPublishInfo> topicPublishInfoTable =
         new ConcurrentHashMap<String, TopicPublishInfo>();
