@@ -62,6 +62,15 @@ public class ClientConfig {
 
     private LanguageCode language = LanguageCode.JAVA;
 
+    /**
+     * clientId 的生成策略如下：
+     *
+     * clientIp：客户端的 IP 地址。
+     * instanceName：实例名称，默认值为 DEFAULT，但在真正 clientConfig 的 getInstanceName 方法时如果实例名称为 DEFAULT，会自动将其替换为进程的 PID。
+     * unitName：单元名称，如果不为空，则会追加到 clientId 中。
+     *
+     * @return
+     */
     public String buildMQClientId() {
         StringBuilder sb = new StringBuilder();
         sb.append(this.getClientIP());

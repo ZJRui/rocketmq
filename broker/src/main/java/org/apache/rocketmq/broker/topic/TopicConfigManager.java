@@ -356,6 +356,9 @@ public class TopicConfigManager extends ConfigManager {
     }
 
     public void updateTopicConfig(final TopicConfig topicConfig) {
+        /**
+         * broker节点创建topic的逻辑就是这里，如果之前topicConfigTable 中没有则就是创建
+         */
         TopicConfig old = this.topicConfigTable.put(topicConfig.getTopicName(), topicConfig);
         if (old != null) {
             log.info("update topic config, old:[{}] new:[{}]", old, topicConfig);
@@ -365,6 +368,9 @@ public class TopicConfigManager extends ConfigManager {
 
         this.dataVersion.nextVersion();
 
+        /**
+         * 对topicConfigTable持久化
+         */
         this.persist();
     }
 
