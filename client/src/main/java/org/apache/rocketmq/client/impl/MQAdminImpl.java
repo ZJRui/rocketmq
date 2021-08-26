@@ -75,17 +75,45 @@ public class MQAdminImpl {
         this.timeoutMillis = timeoutMillis;
     }
 
+
     public void createTopic(String key, String newTopic, int queueNum) throws MQClientException {
         createTopic(key, newTopic, queueNum, 0);
     }
 
+    /**
+     * MQAdminImpl 是位于rocketmq-client 这个model中。
+     * Producer和consumer 都是 RocketMQ的client。
+     * 因此 在DefaultMQProducerImpl类种存在createTopic方法 ，在改方法中：         this.mQClientFactory.getMQAdminImpl().createTopic(key, newTopic, queueNum, topicSysFlag);
+     *
+     * 在DefaultMQPullConsumerImpl和DefaultMQPushConsumer中也有createTopic方法，在改方法中：        this.mQClientFactory.getMQAdminImpl().createTopic(key, newTopic, queueNum, topicSysFlag);
+     *
+     * 也就是说Producer和Consumer都可以创建topic
+     *
+     * @param key
+     * @param newTopic
+     * @param queueNum
+     * @param topicSysFlag
+     * @throws MQClientException
+     */
     public void createTopic(String key, String newTopic, int queueNum, int topicSysFlag) throws MQClientException {
         try {
             Validators.checkTopic(newTopic);
             Validators.isSystemTopic(newTopic);
+            /**
+             * 和NameServer交互的有 两个分类一个是Broker，一个是RocketMQClient，
+             * RocketMQClient又可以分为Producer和 Consumer。 对于MQClient来说 他使用的是MQAdminImpl ，然后在MQAdminImpl中又 使用了MQClientAPI于NameServer进行交互
+             *
+             * DefaultMQProducerImpl的createTopic如下：使用了MQAdminImpl
+             *     this.mQClientFactory.getMQAdminImpl().createTopic(key, newTopic, queueNum, topicSysFlag);
+             */
             TopicRouteData topicRouteData = this.mQClientFactory.getMQClientAPIImpl().getTopicRouteInfoFromNameServer(key, timeoutMillis);
+            /**
+             * 获取该topic的BrokerData，一个BrokerName中的所有Broker节点主从结构构成一个BrokerData
+             *
+             * 这个地方有个问题：  为什么不判断  上面NameServer返回的topicRouteData 是否为空， 是否包含BrokerData
+             */
             List<BrokerData> brokerDataList = topicRouteData.getBrokerDatas();
-            if (brokerDataList != null && !brokerDataList.isEmpty()) {
+            if (brokerDataList != null && !brokerDataList.isEmpty()) {//问题，如果topic不存在，则brokerDataList为空，这里为什么没有else？
                 Collections.sort(brokerDataList);
 
                 boolean createOKAtLeastOnce = false;
@@ -93,9 +121,27 @@ public class MQAdminImpl {
 
                 StringBuilder orderTopicString = new StringBuilder();
 
+                /**
+                 * 遍历该Topic的所有Brokername的的BrokerData
+                 *
+                 */
                 for (BrokerData brokerData : brokerDataList) {
+                    /**
+                     * 取出该Brokername的主从结构中的master节点地址
+                     * 为什么要取出master节点地址？
+                     * 从后面的内容我们看到 针对该topic的每一个Brokername的master 地址都会发送一个createTopic请求
+                     *
+                     * 然后这个masterbroker就会创建一个Topic
+                     *
+                     * 所以这里就有了一个问题： 在上面我们获取topic的路由信息是从NameServer中获取的getTopicRouteInfoFromNameServer
+                     * 为什么下面创建topic 却是发送给Broker的 而不是发送给NameServer？
+                     */
                     String addr = brokerData.getBrokerAddrs().get(MixAll.MASTER_ID);
                     if (addr != null) {
+                        /**
+                         * 如果master节点不为null则创建 topicConfig，这个是什么操作？
+                         *
+                         */
                         TopicConfig topicConfig = new TopicConfig(newTopic);
                         topicConfig.setReadQueueNums(queueNum);
                         topicConfig.setWriteQueueNums(queueNum);
@@ -103,7 +149,15 @@ public class MQAdminImpl {
 
                         boolean createOK = false;
                         for (int i = 0; i < 5; i++) {
+                            //尝试5次创建topic、
                             try {
+                                /**
+                                 * 问题： 上面我们通过请求nameServer获取该topic的 broker信息
+                                 * 这里发送请求创建topic，那么这个请求发送给谁了？ nameServer还是broker？正常理解好像是nameServer创建broker，但是实际上是
+                                 * 该请求发送给了broker，
+                                 *
+                                 * 下面的createTopic方法中指定了 地址addr，该地址就是 当前brokerName的master节点的地址，因此这个创建topic的请求将会 发送给当前brokername 的master节点
+                                 */
                                 this.mQClientFactory.getMQClientAPIImpl().createTopic(addr, key, topicConfig, timeoutMillis);
                                 createOK = true;
                                 createOKAtLeastOnce = true;
@@ -137,8 +191,16 @@ public class MQAdminImpl {
 
     public List<MessageQueue> fetchPublishMessageQueues(String topic) throws MQClientException {
         try {
+            /**
+             * 从NameServer中获取Topic的信息
+             *
+             */
             TopicRouteData topicRouteData = this.mQClientFactory.getMQClientAPIImpl().getTopicRouteInfoFromNameServer(topic, timeoutMillis);
             if (topicRouteData != null) {
+                /**
+                 * 根据TopicRouteData转成TopicPublishInfo。
+                 * TopicRouteData是请求nameServer得到的数据
+                 */
                 TopicPublishInfo topicPublishInfo = MQClientInstance.topicRouteData2TopicPublishInfo(topic, topicRouteData);
                 if (topicPublishInfo != null && topicPublishInfo.ok()) {
                     return parsePublishMessageQueues(topicPublishInfo.getMessageQueueList());

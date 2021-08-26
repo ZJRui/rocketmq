@@ -63,6 +63,7 @@ public class DefaultMQProducer extends ClientConfig implements MQProducer {
 
     /**
      * Wrapping internal implementations for virtually all methods presented in this class.
+     * 包装这个类中几乎所有方法的内部实现。
      */
     protected final transient DefaultMQProducerImpl defaultMQProducerImpl;
     private final InternalLogger log = ClientLogger.getLog();
@@ -73,6 +74,8 @@ public class DefaultMQProducer extends ClientConfig implements MQProducer {
      * For non-transactional messages, it does not matter as long as it's unique per process. </p>
      *
      * See {@linktourl http://rocketmq.apache.org/docs/core-concept/} for more discussion.
+     * 生产者组在概念上聚合了完全相同角色的所有生产者实例，这在涉及事务性消息时尤其重要。
+     * 对于非事务性消息，只要它在每个进程中是唯一的就可以了。见更多讨论。
      */
     private String producerGroup;
 
@@ -83,6 +86,7 @@ public class DefaultMQProducer extends ClientConfig implements MQProducer {
 
     /**
      * Number of queues to create per default topic.
+     * 每个默认主题要创建的队列数量。
      */
     private volatile int defaultTopicQueueNums = 4;
 
@@ -100,6 +104,11 @@ public class DefaultMQProducer extends ClientConfig implements MQProducer {
      * Maximum number of retry to perform internally before claiming sending failure in synchronous mode. </p>
      *
      * This may potentially cause message duplication which is up to application developers to resolve.
+     *
+     * 在同步模式中声明发送失败之前在内部执行的最大重试次数。这可能会导致消息重复，这要由应用程序开发人员来解决。
+     *
+     * 注意是在确定发送失败之前 尝试的次数，也就是说 当前不知道是否发送成功，然后尝试重试2两次，最终确定发送失败
+     *
      */
     private int retryTimesWhenSendFailed = 2;
 
@@ -107,11 +116,13 @@ public class DefaultMQProducer extends ClientConfig implements MQProducer {
      * Maximum number of retry to perform internally before claiming sending failure in asynchronous mode. </p>
      *
      * This may potentially cause message duplication which is up to application developers to resolve.
+     * 在异步模式中声明发送失败之前，内部执行的最大重试次数。这可能会导致消息重复，这要由应用程序开发人员来解决。
      */
     private int retryTimesWhenSendAsyncFailed = 2;
 
     /**
      * Indicate whether to retry another broker on sending failure internally.
+     * 指示是否在内部发送失败时重试另一个代理。
      */
     private boolean retryAnotherBrokerWhenNotStoreOK = false;
 
@@ -296,7 +307,7 @@ public class DefaultMQProducer extends ClientConfig implements MQProducer {
 
     /**
      * Fetch message queues of topic <code>topic</code>, to which we may send/publish messages.
-     *
+     *获取topic topic的消息队列，我们可以向其发送/发布消息。
      * @param topic Topic to fetch.
      * @return List of message queues readily to send messages to
      * @throws MQClientException if there is any client error.

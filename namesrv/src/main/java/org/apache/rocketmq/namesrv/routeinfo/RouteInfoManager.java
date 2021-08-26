@@ -486,6 +486,11 @@ public class RouteInfoManager {
         try {
             try {
                 this.lock.readLock().lockInterruptibly();
+                /**
+                 * 根据Topic的名称从topicQueueTable获取topic信息。
+                 * 假设集群中有两个BrokerName，则会返回2个QueueData对象。
+                 *
+                 */
                 List<QueueData> queueDataList = this.topicQueueTable.get(topic);
                 if (queueDataList != null) {
                     topicRouteData.setQueueDatas(queueDataList);
@@ -494,9 +499,16 @@ public class RouteInfoManager {
                     Iterator<QueueData> it = queueDataList.iterator();
                     while (it.hasNext()) {
                         QueueData qd = it.next();
+                        /**
+                         * 存储Topic中存在的BrokerName
+                         */
                         brokerNameSet.add(qd.getBrokerName());
                     }
 
+                    /**
+                     * 对于每一个BrokerName 可以有多个Broker节点构成 主从结构，获取每一个BrokerName中broker节点信息， 一个BrokerName 中的所有broker
+                     * 构成一个BrokerData数据
+                     */
                     for (String brokerName : brokerNameSet) {
                         BrokerData brokerData = this.brokerAddrTable.get(brokerName);
                         if (null != brokerData) {

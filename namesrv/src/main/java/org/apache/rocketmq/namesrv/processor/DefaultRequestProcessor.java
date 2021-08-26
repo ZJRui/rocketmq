@@ -108,6 +108,13 @@ public class DefaultRequestProcessor extends AsyncNettyRequestProcessor implemen
                 }
             case RequestCode.UNREGISTER_BROKER:
                 return this.unregisterBroker(ctx, request);
+            /**
+             * get  routeinfo by topic
+             * 这个请求是什么时候发过来的？ 生产者调用方法 fetchPublishMessageQueues
+             * 在这个fetch方法中会执行
+             * TopicRouteData topicRouteData = this.mQClientFactory.getMQClientAPIImpl().getTopicRouteInfoFromNameServer(topic, timeoutMillis);
+             * 然后nameServer就会收到这个请求
+             */
             case RequestCode.GET_ROUTEINFO_BY_TOPIC:
                 return this.getRouteInfoByTopic(ctx, request);
             case RequestCode.GET_BROKER_CLUSTER_INFO:

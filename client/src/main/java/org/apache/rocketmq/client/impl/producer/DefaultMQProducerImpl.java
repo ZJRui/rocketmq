@@ -186,8 +186,16 @@ public class DefaultMQProducerImpl implements MQProducerInner {
                     this.defaultMQProducer.changeInstanceNameToPID();
                 }
 
+                /**
+                 * 获取MQClientInstance 对象，一般来说一个JVM就是一个MQClient，这个Client中有多个Producer 多个Consumer
+                 * 问题： 是否一个JVM进程内就只有一个MQClinet？
+                 */
                 this.mQClientFactory = MQClientManager.getInstance().getOrCreateMQClientInstance(this.defaultMQProducer, rpcHook);
 
+                /**
+                 * 如果对于ProducerGroup ：28751_UpgradeTenantPaasMetaDataGroup] 已经存在了一个生产者，则 当你再创建一个Producer，该producerGroup已经存在了则不允许创建新的 Producer
+                 *
+                 */
                 boolean registerOK = mQClientFactory.registerProducer(this.defaultMQProducer.getProducerGroup(), this);
                 if (!registerOK) {
                     this.serviceState = ServiceState.CREATE_JUST;
@@ -548,12 +556,21 @@ public class DefaultMQProducerImpl implements MQProducerInner {
         final SendCallback sendCallback,
         final long timeout
     ) throws MQClientException, RemotingException, MQBrokerException, InterruptedException {
+
+        /**
+         *
+         * 确认serviceState的状态
+         */
         this.makeSureStateOK();
         Validators.checkMessage(msg, this.defaultMQProducer);
+
         final long invokeID = random.nextLong();
         long beginTimestampFirst = System.currentTimeMillis();
         long beginTimestampPrev = beginTimestampFirst;
         long endTimestamp = beginTimestampFirst;
+        /**
+         * topic的 publishInfo
+         */
         TopicPublishInfo topicPublishInfo = this.tryToFindTopicPublishInfo(msg.getTopic());
         if (topicPublishInfo != null && topicPublishInfo.ok()) {
             boolean callTimeout = false;
@@ -687,6 +704,7 @@ public class DefaultMQProducerImpl implements MQProducerInner {
     }
 
     private TopicPublishInfo tryToFindTopicPublishInfo(final String topic) {
+
         TopicPublishInfo topicPublishInfo = this.topicPublishInfoTable.get(topic);
         /**
          * ok方法内会判断 topic的messageQueueList是否为null或者size=0，如果为空则ok返回false
@@ -698,7 +716,8 @@ public class DefaultMQProducerImpl implements MQProducerInner {
             this.topicPublishInfoTable.putIfAbsent(topic, new TopicPublishInfo());
 
             /**
-             * 查询topic
+             * 从nameServer中查询topic，在这里
+             *
              */
             this.mQClientFactory.updateTopicRouteInfoFromNameServer(topic);
             topicPublishInfo = this.topicPublishInfoTable.get(topic);
@@ -714,6 +733,7 @@ public class DefaultMQProducerImpl implements MQProducerInner {
         } else {
             /**
              * 这个参数中的true 表示isDefault，如果该参数为true，我们会传入一个defaultMqProducer
+             *
              */
             this.mQClientFactory.updateTopicRouteInfoFromNameServer(topic, true, this.defaultMQProducer);
             topicPublishInfo = this.topicPublishInfoTable.get(topic);
@@ -800,6 +820,9 @@ public class DefaultMQProducerImpl implements MQProducerInner {
                 requestHeader.setProducerGroup(this.defaultMQProducer.getProducerGroup());
                 requestHeader.setTopic(msg.getTopic());
                 requestHeader.setDefaultTopic(this.defaultMQProducer.getCreateTopicKey());
+                /**
+                 * 这里设置了topic的队列数量是4
+                 */
                 requestHeader.setDefaultTopicQueueNums(this.defaultMQProducer.getDefaultTopicQueueNums());
                 requestHeader.setQueueId(mq.getQueueId());
                 requestHeader.setSysFlag(sysFlag);

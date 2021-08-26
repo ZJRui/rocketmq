@@ -27,6 +27,9 @@ import org.apache.rocketmq.remoting.RPCHook;
 
 public class MQClientManager {
     private final static InternalLogger log = ClientLogger.getLog();
+    /**
+     * 一个JVM内只有一个ClientManager
+     */
     private static MQClientManager instance = new MQClientManager();
     private AtomicInteger factoryIndexGenerator = new AtomicInteger();
     private ConcurrentMap<String/* clientId */, MQClientInstance> factoryTable =
@@ -44,7 +47,24 @@ public class MQClientManager {
         return getOrCreateMQClientInstance(clientConfig, null);
     }
 
+    /**
+     * 关于MQClientInstance的唯一性： 是否一个JVM进程内只有一个MQClientInstance呢？
+     * 一般来说一个JVM就是一个MQClient，这个Client中有多个Producer 多个Consumer
+     * @param clientConfig
+     * @param rpcHook
+     * @return
+     */
     public MQClientInstance getOrCreateMQClientInstance(final ClientConfig clientConfig, RPCHook rpcHook) {
+        /**
+         * 对于不同的clientId会创建不同的MQClientInstance
+         *
+         * 当前类是MQClientManager，在一个JVM内只有一个MQClientManager，因为MQClientManager中如下定义静态对象
+         *  private static MQClientManager instance = new MQClientManager();
+         *
+         *  然后对于不同的clientId 会创建一个MQClientInstance
+         *  一个JVM内可能有多个MQClientInstance。
+         *  MQClientInstance中有一个producerTable、ConsumerTable、topicRouteTable
+         */
         String clientId = clientConfig.buildMQClientId();
         MQClientInstance instance = this.factoryTable.get(clientId);
         if (null == instance) {

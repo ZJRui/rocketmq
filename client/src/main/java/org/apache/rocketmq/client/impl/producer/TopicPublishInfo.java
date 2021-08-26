@@ -24,10 +24,20 @@ import org.apache.rocketmq.common.protocol.route.QueueData;
 import org.apache.rocketmq.common.protocol.route.TopicRouteData;
 
 public class TopicPublishInfo {
+    /**
+     * TopicPublishInfo 对象的创建是在 topicRouteData2TopicPublishInfo 方法中，在改方法中会组装TopicPublishInfo中的各种数据属性
+     */
     private boolean orderTopic = false;
     private boolean haveTopicRouterInfo = false;
     private List<MessageQueue> messageQueueList = new ArrayList<MessageQueue>();
     private volatile ThreadLocalIndex sendWhichQueue = new ThreadLocalIndex();
+    /**
+     * TopicRouteData中存储了topic的所有信息，该信息是从nameServer中获取到的。
+     * 首先Topic 下划分BrokerName，一个Topic可以有两个BrokerName， 每一个BrokerName内可以有多个Broker节点，这些broker节点构成主从结构。
+     * 每一个brokerName对应一个QueueData， topic有两个BrokerName则 TopicRouteData中的queueDatas 大小就是2.
+     *
+     * 一个BrokerName中的所有broker节点信息构成一个BrokerData。因此TopicRouteData中的brokerDatas 的大小也是取决于该topic的brokerName数量
+     */
     private TopicRouteData topicRouteData;
 
     public boolean isOrderTopic() {

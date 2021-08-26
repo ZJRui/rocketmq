@@ -26,6 +26,23 @@ import java.util.List;
 import org.apache.rocketmq.remoting.protocol.RemotingSerializable;
 
 public class TopicRouteData extends RemotingSerializable {
+    /**
+     * TopicRouteData中存储了topic的所有信息，该信息是从nameServer中获取到的。
+     * 首先Topic 下划分BrokerName，一个Topic可以有两个BrokerName， 每一个BrokerName内可以有多个Broker节点，这些broker节点构成主从结构。
+     * 每一个brokerName对应一个QueueData， topic有两个BrokerName则 TopicRouteData中的queueDatas 大小就是2.
+     *
+     * 一个BrokerName中的所有broker节点信息构成一个BrokerData。因此TopicRouteData中的brokerDatas 的大小也是取决于该topic的brokerName数量
+     */
+    /**
+     *   TopicRouteData topicRouteData = this.mQClientFactory.getMQClientAPIImpl().getTopicRouteInfoFromNameServer(topic, timeoutMillis);
+     *
+     *
+     *      * topic排序的配置
+     *      * 和"ORDER_TOPIC_CONFIG"这个NameSpace有关
+     *      * 参照DefaultRequestProcessor#getRouteInfoByTopic
+     *      *
+     *      这个一般是怎么配置，目前没有深究，似乎一般就用默认的null
+     */
     private String orderTopicConf;
     private List<QueueData> queueDatas;
     private List<BrokerData> brokerDatas;

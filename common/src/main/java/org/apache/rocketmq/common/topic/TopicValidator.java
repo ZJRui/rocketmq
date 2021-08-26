@@ -51,6 +51,10 @@ public class TopicValidator {
     private static final Set<String> NOT_ALLOWED_SEND_TOPIC_SET = new HashSet<String>();
 
     static {
+        /**
+         * auto_create_topic_key_topic
+         *
+         */
         SYSTEM_TOPIC_SET.add(AUTO_CREATE_TOPIC_KEY_TOPIC);
         SYSTEM_TOPIC_SET.add(RMQ_SYS_SCHEDULE_TOPIC);
         SYSTEM_TOPIC_SET.add(RMQ_SYS_BENCHMARK_TOPIC);

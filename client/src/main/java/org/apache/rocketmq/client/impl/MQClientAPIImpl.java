@@ -281,6 +281,9 @@ public class MQClientAPIImpl {
 
         RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.UPDATE_AND_CREATE_TOPIC, requestHeader);
 
+        /**
+         * invokeSync中指定了地址addr，该地址是某一个BrokerName的master地址
+         */
         RemotingCommand response = this.remotingClient.invokeSync(MixAll.brokerVIPChannel(this.clientConfig.isVipChannelEnabled(), addr),
             request, timeoutMillis);
         assert response != null;
@@ -1352,6 +1355,9 @@ public class MQClientAPIImpl {
     public TopicRouteData getTopicRouteInfoFromNameServer(final String topic, final long timeoutMillis)
         throws RemotingException, MQClientException, InterruptedException {
 
+        /**
+         * 这里最后一个参数是true，表示允许topic不存在
+         */
         return getTopicRouteInfoFromNameServer(topic, timeoutMillis, true);
     }
 
@@ -1359,7 +1365,7 @@ public class MQClientAPIImpl {
         boolean allowTopicNotExist) throws MQClientException, InterruptedException, RemotingTimeoutException, RemotingSendRequestException, RemotingConnectException {
 
         /**
-         * 请求中设置topic
+         * 请求中设置topic，请求参数非常简单就是 topic参数
          */
         GetRouteInfoRequestHeader requestHeader = new GetRouteInfoRequestHeader();
         requestHeader.setTopic(topic);
@@ -1373,6 +1379,9 @@ public class MQClientAPIImpl {
         assert response != null;
         switch (response.getCode()) {
             case ResponseCode.TOPIC_NOT_EXIST: {
+                /**
+                 *
+                 */
                 if (allowTopicNotExist) {
                     log.warn("get Topic [{}] RouteInfoFromNameServer is not exist value", topic);
                 }
@@ -1382,12 +1391,18 @@ public class MQClientAPIImpl {
             case ResponseCode.SUCCESS: {
                 byte[] body = response.getBody();
                 if (body != null) {
+                    /**
+                     * topic存在则返回topic的信息
+                     */
                     return TopicRouteData.decode(body, TopicRouteData.class);
                 }
             }
             default:
                 break;
         }
+        /**
+         * topic不存在则 抛出异常
+         */
 
         throw new MQClientException(response.getCode(), response.getRemark());
     }

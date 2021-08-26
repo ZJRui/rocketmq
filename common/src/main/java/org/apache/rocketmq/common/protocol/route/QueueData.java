@@ -23,6 +23,16 @@ package org.apache.rocketmq.common.protocol.route;
 import java.util.Queue;
 
 public class QueueData implements Comparable<QueueData> {
+    /**
+     * QueueData中存在BrokerName属性
+     * 实际上一个在集群中两个BrokerName，则这个Topic就会有两个QueueData，然后每一个QueueData中存在brokerName属性
+     *
+     * RouteInfoManager#createAndUpdateQueueData(java.lang.String, org.apache.rocketmq.common.TopicConfig)
+     * 在createAndUpdateQueueData方法中 会为这个Topic的每一个BrokerName创建一个QueueData。
+     * 如果这个BrokerName不存在QueueData则创建一个，如果已经存在QueueData则更新，也就是说一个Topic的一个BrokerName对应一个QueueData
+     *
+     * 在一个BrokerName中可以有多个broker节点构成主从结构
+     */
     private String brokerName;
     private int readQueueNums;
     private int writeQueueNums;
