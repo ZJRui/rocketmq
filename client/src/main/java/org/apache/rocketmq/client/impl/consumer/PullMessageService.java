@@ -155,8 +155,25 @@ public class PullMessageService extends ServiceThread {
              *   （2）pullMessage 的请求参数 PullRequest是怎么来的？ 也就是PullRequest对象是怎么来的 主要有两个地方
              *                  * (1)一个是在RocketMQ根据PullRequest拉取任务执行完一次消息拉取任务后，又将PullRequest对象放入到PullRequestQueue
              *                  * （2）第二个是在RebalanceImpl中创建， 这里是PullRequest对象真正创建的地方org.apache.rocketmq.client.impl.consumer.RebalanceImpl#updateProcessQueueTableInRebalance(java.lang.String, java.util.Set, boolean)
-             *     我们只需要保证在创建PullRequest的时候 指定给PullRequest的ConsumerGroup对应的consumer为PushConsumer，然后在这里我们根据PullRequest中的 ConsumerGroup
-             *     在consumerTable中取出的consumer就必然是PushConsumer
+             *
+             *     在RebalanceImpl的updateProcessQueueTableInRebalance 方法中会创建PullRequest， 将这些PullRequest手机起来 然后调用  this.dispatchPullRequest(pullRequestList);其中this就是RebalanceImpl对象
+             *
+             *
+             *     对于RebalancePushImpl的dispatchPullRequest 实现如下， 使用持有的PushConsumer的executePullRequest 方法 将每一个PullRequest放置到 PullMessageService的队列中
+             *       @Override
+             *     public void dispatchPullRequest(List<PullRequest> pullRequestList) {
+             *         for (PullRequest pullRequest : pullRequestList) {
+             *             this.defaultMQPushConsumerImpl.executePullRequestImmediately(pullRequest);
+             *             log.info("doRebalance, {}, add a new pull request {}", consumerGroup, pullRequest);
+             *         }
+             *     }
+             *
+             *     对于RebalancePullImpl的dispatchPullRequest的实现如下： 没有做任何处理， 这就保证了 放置到PullMessageService的队列中的PullRequest 全部都是 RebalancePushImpl的dispatchPullRequest 方法使用PushConsumer 放入的 PullRequest
+             *      @Override
+             *     public void dispatchPullRequest(List<PullRequest> pullRequestList) {
+             *     }
+             *
+             *
              *
              */
             DefaultMQPushConsumerImpl impl = (DefaultMQPushConsumerImpl) consumer;
