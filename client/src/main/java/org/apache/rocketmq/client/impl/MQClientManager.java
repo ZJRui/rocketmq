@@ -64,6 +64,30 @@ public class MQClientManager {
          *  然后对于不同的clientId 会创建一个MQClientInstance
          *  一个JVM内可能有多个MQClientInstance。
          *  MQClientInstance中有一个producerTable、ConsumerTable、topicRouteTable
+         *
+         *
+         *  经过测试发现如下： 首先 方法getOrCreateMQClientInstance  的参数是 ClientConfig。
+         *  在RocketMQ中 config 有几种情况： DefaultMQProducer  DefaultMQPullConsumer 、DefaultMQPushConsumer等等。
+         *  一般我们创建一个Producer 或者Consumer 之后 会调用器start方法。
+         *
+         *  在Producer 和Consumer中都会有一个属性 MQClientInstance mQClientFactory
+         *
+         *  比如Producer的start方法中：
+         *  this.mQClientFactory = MQClientManager.getInstance().getOrCreateMQClientInstance(this.defaultMQProducer, rpcHook);
+         *
+         *  Consumer的start方法中：
+         *   this.mQClientFactory = MQClientManager.getInstance().getOrCreateMQClientInstance(this.defaultMQPushConsumer, this.rpcHook);
+         *
+         *   Consumer中和Producer中 通过MQClientManager.getInstance() 拿到的MQClientManager是一样 的，整个JVM内只有一个MQClientManager。
+         *
+         *   但是Consumer和Producer拿到的MQClientInstance是不同的，因为 两者的参数ClientConfig不同的，导致 生成的clientId是不同的。
+         *
+         *
+         * 比如：
+         {192.168.102.98@6323@172.102.12.22:9876=org.apache.rocketmq.client.impl.factory.MQClientInstance@5c01e5c0,
+         192.168.102.98@DEFAULT@172.102.12.22:9876=org.apache.rocketmq.client.impl.factory.MQClientInstance@90118cf}
+         *
+         *
          */
         String clientId = clientConfig.buildMQClientId();
         MQClientInstance instance = this.factoryTable.get(clientId);

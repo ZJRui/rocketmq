@@ -21,6 +21,7 @@ import java.util.HashSet;
 import java.util.Iterator;
 import java.util.Set;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.rocketmq.client.impl.MQClientManager;
 import org.apache.rocketmq.common.UtilAll;
 import org.apache.rocketmq.common.message.MessageQueue;
 import org.apache.rocketmq.common.protocol.NamespaceUtil;
@@ -135,6 +136,31 @@ public class ClientConfig {
      * instanceName：实例名称，默认值为 DEFAULT，但在真正 clientConfig 的 getInstanceName 方法时如果实例名称为 DEFAULT，会自动将其替换为进程的 PID。
      * unitName：单元名称，如果不为空，则会追加到 clientId 中。
      *
+     * *
+     *          *  经过测试发现如下： 首先 方法getOrCreateMQClientInstance  的参数是 ClientConfig。
+     *          *  在RocketMQ中 config 有几种情况： DefaultMQProducer  DefaultMQPullConsumer 、DefaultMQPushConsumer等等。
+     *          *  一般我们创建一个Producer 或者Consumer 之后 会调用器start方法。
+     *          *
+     *          *  在Producer 和Consumer中都会有一个属性 MQClientInstance mQClientFactory
+     *          *
+     *          *  比如Producer的start方法中：
+     *          *  this.mQClientFactory = MQClientManager.getInstance().getOrCreateMQClientInstance(this.defaultMQProducer, rpcHook);
+     *          *
+     *          *  Consumer的start方法中：
+     *          *   this.mQClientFactory = MQClientManager.getInstance().getOrCreateMQClientInstance(this.defaultMQPushConsumer, this.rpcHook);
+     *          *
+     *          *   Consumer中和Producer中 通过MQClientManager.getInstance() 拿到的MQClientManager是一样 的，整个JVM内只有一个MQClientManager。
+     *          *
+     *          *   但是Consumer和Producer拿到的MQClientInstance是不同的，因为 两者的参数ClientConfig不同的，导致 生成的clientId是不同的。
+     *
+     *
+     *          对于Consumer而言，在生成clientId之前 会先判断 instanceName是否是default，如果是则将其修改为pid。 具体参考Consumer的start
+     *          对于Producer而言，在生成clientid之前会 先判断instanceName是否是 RocketMQ内置的一个ProducerGroup 如果是才将instanceName修改为Pid，具体参考Producer的start
+     *          因此假设你创建一个默认值的Consumer和默认值的Producer，则会生成两个不同的clientid:
+     *          consumer的clientid: currentIp@pid@namserverAddr -- 根据这个clientId创建一个MQClientInstance
+     *          Producer的clientId currentId@Default@NameServerAddr ---根据这个clientId创建一个MQClientInstance
+     *
+     *
      * @return
      */
     public String buildMQClientId() {
@@ -168,6 +194,7 @@ public class ClientConfig {
     }
 
     public void changeInstanceNameToPID() {
+
         if (this.instanceName.equals("DEFAULT")) {
             this.instanceName = String.valueOf(UtilAll.getPid());
         }

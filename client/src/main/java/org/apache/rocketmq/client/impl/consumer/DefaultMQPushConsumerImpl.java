@@ -201,6 +201,12 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
         this.mQClientFactory.getMQAdminImpl().createTopic(key, newTopic, queueNum, topicSysFlag);
     }
 
+    /**
+     * 获取消费者对主题topic分配了那些消息队列
+     * @param topic
+     * @return
+     * @throws MQClientException
+     */
     public Set<MessageQueue> fetchSubscribeMessageQueues(String topic) throws MQClientException {
         Set<MessageQueue> result = this.rebalanceImpl.getTopicSubscribeInfoTable().get(topic);
         if (null == result) {
@@ -621,6 +627,17 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
 
                 this.copySubscription();
 
+                /**
+                 * 如果消费模式Wie集群模式，则将consumer的instanceName转为pid，后续生成clientId的时候会使用到。
+                 *
+                 * 为什么要这样搞？
+                 *
+                 * 假设我创建两个consumer，ConsumerGroup是相同的，但一个是集群模式，一个是广播模式。
+                 * 从这里来看，集群模式的consumer的InstanceName将被变更为pid
+                 * 广播模式的consumer的instanceName仍然是default
+                 * 这两个consumer属于不同的MQClientInstance。
+                 * 因此两个consumer创建后注册到不同的MQClientInstance
+                 */
                 if (this.defaultMQPushConsumer.getMessageModel() == MessageModel.CLUSTERING) {
                     this.defaultMQPushConsumer.changeInstanceNameToPID();
                 }
@@ -635,15 +652,23 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
                 this.pullAPIWrapper = new PullAPIWrapper(
                     mQClientFactory,
                     this.defaultMQPushConsumer.getConsumerGroup(), isUnitMode());
+
+
                 this.pullAPIWrapper.registerFilterMessageHook(filterMessageHookList);
 
                 if (this.defaultMQPushConsumer.getOffsetStore() != null) {
                     this.offsetStore = this.defaultMQPushConsumer.getOffsetStore();
                 } else {
                     switch (this.defaultMQPushConsumer.getMessageModel()) {
+                        /**
+                         * 广播模式使用 LocalFile存储offset
+                         */
                         case BROADCASTING:
                             this.offsetStore = new LocalFileOffsetStore(this.mQClientFactory, this.defaultMQPushConsumer.getConsumerGroup());
                             break;
+                        /**
+                         * 集群模式使用RemoteBrokerOffsetStore存储offset
+                         */
                         case CLUSTERING:
                             this.offsetStore = new RemoteBrokerOffsetStore(this.mQClientFactory, this.defaultMQPushConsumer.getConsumerGroup());
                             break;
@@ -669,6 +694,15 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
 
                 this.consumeMessageService.start();
 
+                /**
+                 * 如果对于ProducerGroup ：28751_UpgradeTenantPaasMetaDataGroup] 已经存在了一个生产者，则 当你再创建一个Producer，该producerGroup已经存在了则不允许创建新的 Producer
+                 *
+                 * 注意对Consumer和Producer启动的对比，同一个JVM进程内要求 对于同一个ProducerGroup只能有一个Producer
+                 * 但是对于consumer来说 一个JVM内同一个ConsumerGroup 不可以多个Consumer，如下校验ConsumerGroup是否已经存在Consumer
+                 *
+                 * 确保同一个MQClientInstance内 同一个ConsumerGroup内只有一个Consumer
+                 *
+                 */
                 boolean registerOK = mQClientFactory.registerConsumer(this.defaultMQPushConsumer.getConsumerGroup(), this);
                 if (!registerOK) {
                     this.serviceState = ServiceState.CREATE_JUST;
@@ -678,6 +712,9 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
                         null);
                 }
 
+                /**
+                 *  这里调用了MQClientInstance的start方法
+                 */
                 mQClientFactory.start();
                 log.info("the consumer [{}] start OK.", this.defaultMQPushConsumer.getConsumerGroup());
                 this.serviceState = ServiceState.RUNNING;
@@ -1064,6 +1101,7 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
         try {
             this.makeSureStateOK();
             Set<MessageQueue> mqs = new HashSet<MessageQueue>();
+
             Set<MessageQueue> allocateMq = this.rebalanceImpl.getProcessQueueTable().keySet();
             mqs.addAll(allocateMq);
 

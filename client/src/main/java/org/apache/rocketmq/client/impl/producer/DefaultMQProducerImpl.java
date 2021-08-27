@@ -123,6 +123,79 @@ public class DefaultMQProducerImpl implements MQProducerInner {
      *
      */
     private final DefaultMQProducer defaultMQProducer;
+    /**
+     * {
+     * 	"AUTO_CREATE_TOPIC_KEY":{
+     * 		"topicRouteData":{
+     * 			"brokerDatas":[
+     *                                {
+     * 					"cluster":"DefaultCluster",
+     * 					"brokerAddrs":{
+     * 						"0":"192.168.102.73:10911"
+     *                    },
+     * 					"brokerName":"localhost"
+     *                }
+     * 			],
+     * 			"filterServerTable":{},
+     * 			"queueDatas":[
+     *                {
+     * 					"readQueueNums":8,
+     * 					"perm":6,
+     * 					"writeQueueNums":8,
+     * 					"topicSynFlag":0,
+     * 					"brokerName":"localhost"
+     *                }
+     * 			]
+     * 		},
+     * 		"sendWhichQueue":{
+     * 			"andIncrement":2104951802
+     * 		},
+     * 		"orderTopic":false,
+     * 		"haveTopicRouterInfo":true,
+     * 		"messageQueueList":[* 			{
+     * 				"queueId":0,
+     * 				"topic":"AUTO_CREATE_TOPIC_KEY",
+     * 				"brokerName":"localhost"
+     *            },
+     *            {
+     * 				"queueId":1,
+     * 				"topic":"AUTO_CREATE_TOPIC_KEY",
+     * 				"brokerName":"localhost"
+     *            },
+     *            {
+     * 				"queueId":2,
+     * 				"topic":"AUTO_CREATE_TOPIC_KEY",
+     * 				"brokerName":"localhost"
+     *            },
+     *            {
+     * 				"queueId":3,
+     * 				"topic":"AUTO_CREATE_TOPIC_KEY",
+     * 				"brokerName":"localhost"
+     *            },
+     *            {
+     * 				"queueId":4,
+     * 				"topic":"AUTO_CREATE_TOPIC_KEY",
+     * 				"brokerName":"localhost"
+     *            },
+     *            {
+     * 				"queueId":5,
+     * 				"topic":"AUTO_CREATE_TOPIC_KEY",
+     * 				"brokerName":"localhost"
+     *            },
+     *            {
+     * 				"queueId":6,
+     * 				"topic":"AUTO_CREATE_TOPIC_KEY",
+     * 				"brokerName":"localhost"
+     *            },
+     *            {
+     * 				"queueId":7,
+     * 				"topic":"AUTO_CREATE_TOPIC_KEY",
+     * 				"brokerName":"localhost"
+     *            }
+     * 		]* 	}
+     * }
+     *
+     */
     private final ConcurrentMap<String/* topic */, TopicPublishInfo> topicPublishInfoTable =
         new ConcurrentHashMap<String, TopicPublishInfo>();
     private final ArrayList<SendMessageHook> sendMessageHookList = new ArrayList<SendMessageHook>();
@@ -218,6 +291,10 @@ public class DefaultMQProducerImpl implements MQProducerInner {
 
                 this.checkConfig();
 
+                /**
+                 * 如果producerGroup是 RocketMQ内置的客户端生产者组，此时将Producer的instanceName 改为pid，后续生成clientid
+                 * 的时候会使用到
+                 */
                 if (!this.defaultMQProducer.getProducerGroup().equals(MixAll.CLIENT_INNER_PRODUCER_GROUP)) {
                     this.defaultMQProducer.changeInstanceNameToPID();
                 }
@@ -231,6 +308,9 @@ public class DefaultMQProducerImpl implements MQProducerInner {
 
                 /**
                  * 如果对于ProducerGroup ：28751_UpgradeTenantPaasMetaDataGroup] 已经存在了一个生产者，则 当你再创建一个Producer，该producerGroup已经存在了则不允许创建新的 Producer
+                 *
+                 * 注意对Consumer和Producer启动的对比，同一个JVM进程内要求 对于同一个ProducerGroup只能有一个Producer
+                 * 但是对于consumer来说 一个JVM内同一个ConsumerGroup可以有多个Consumer，在Consumer的start方法中我们并没有看到对 registerConsumer的校验
                  *
                  */
                 boolean registerOK = mQClientFactory.registerProducer(this.defaultMQProducer.getProducerGroup(), this);
@@ -247,7 +327,9 @@ public class DefaultMQProducerImpl implements MQProducerInner {
                 this.topicPublishInfoTable.put(this.defaultMQProducer.getCreateTopicKey(), new TopicPublishInfo());
 
                 /**
-                 * mQClientFactory的start 会启动一个线程PullMessageService 拉取消息
+                 *
+                 * 这里判断是否调用MQClientInstance的start方法,startFactory 永远为true
+                 *
                  */
                 if (startFactory) {
                     mQClientFactory.start();

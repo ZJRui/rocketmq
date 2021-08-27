@@ -34,6 +34,17 @@ public class QueueData implements Comparable<QueueData> {
      * 在一个BrokerName中可以有多个broker节点构成主从结构
      */
     private String brokerName;
+    /**
+     * 顶一个一个BrokerName内有几个可读队列 有几个可写队列。
+     *
+     * 对于可读队列readQueueNums的使用是在 MQClientInstance#topicRouteData2TopicSubscribeInfo在这个方法中，会取出该BrokerName中可读队列的数量，为每一个可读队列创建一个
+     * MessageQueue，然后将创建的 MessageQueue通过Consumer的updateTopicSubscribeInfo方法更新到consumer的订阅列表中。因为Consumer作为读取消息，是读取可读队列
+     *
+     * 对于writeQueueNums ，是在MQClientInstance的topicRouteData2TopicPublishInfo 方法中读取BrokerName的可读队列的数量，为每一个可读队列创建一个MessageQueue，
+     * 然后将MessageQueue 使用 producer的 updateTopicPublishInfo更新到Producer的topicPublishInfoTable ，毕竟Producer作为生产者他的消息都是要发送到可写队列中。
+     *
+     *
+     */
     private int readQueueNums;
     private int writeQueueNums;
     /**

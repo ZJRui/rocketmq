@@ -39,6 +39,9 @@ import org.apache.rocketmq.common.message.MessageQueue;
 import org.apache.rocketmq.logging.InternalLogger;
 import org.apache.rocketmq.remoting.protocol.LanguageCode;
 
+/**
+ * 消息消费有两种模式： 所谓拉模式，是消费端主动发起拉请求，而推模式是消息到达消息服务器后，推送给消息消费者
+ */
 public class PullConsumerImpl implements PullConsumer {
     private final DefaultMQPullConsumer rocketmqPullConsumer;
     private final KeyValue properties;

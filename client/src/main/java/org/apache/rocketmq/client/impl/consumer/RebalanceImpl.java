@@ -174,6 +174,9 @@ public abstract class RebalanceImpl {
                 for (MessageQueue mmqq : lockedMq) {
                     ProcessQueue processQueue = this.processQueueTable.get(mmqq);
                     if (processQueue != null) {
+                        /**
+                         * 设置MessageQueue 对应的ProcessQueue为锁定状态
+                         */
                         processQueue.setLocked(true);
                         processQueue.setLastLockTimestamp(System.currentTimeMillis());
                     }
@@ -268,6 +271,10 @@ public abstract class RebalanceImpl {
     private void rebalanceByTopic(final String topic, final boolean isOrder) {
         switch (messageModel) {
             case BROADCASTING: {
+                /**
+                 * 获取Topic的MessageQueue，MessageQueue其实就是该Topic下有多少个读队列
+                 *
+                 */
                 Set<MessageQueue> mqSet = this.topicSubscribeInfoTable.get(topic);
                 if (mqSet != null) {
                     boolean changed = this.updateProcessQueueTableInRebalance(topic, mqSet, isOrder);
@@ -393,6 +400,17 @@ public abstract class RebalanceImpl {
         final boolean isOrder) {
         boolean changed = false;
 
+        /**
+         * 首先要明确 参数mqSet是怎么来的
+         * 参数mqSet是从consumer的rebalanceImpl的topicSubscribeInfoTable 中根据topic提取出来的。
+         * 而topicSubscribeInfoTable中的数据 又是 MQClientInstance 启动的了一个定时任务updateTopicRouteInfoFromNameServer 定时从nameServer读取topic的TopicRouteData
+         * 然后分析TopicRouteData 更新到 consumer的topicSubscribeInfoTable属性中，和Producer的TopicPublishInfo属性中
+         *
+         * 在本方法中实现的逻辑 就是基于  topicSubscribeInfoTable 更新 rebalanceImpl的processQueueTable
+         *
+         * 遍历processQueueTable 中的每一个key Value，判断processQueueTable 中的MessageQueue是否 还在 topicSubscribeInfoTable 中
+         *
+         */
         Iterator<Entry<MessageQueue, ProcessQueue>> it = this.processQueueTable.entrySet().iterator();
         while (it.hasNext()) {
             Entry<MessageQueue, ProcessQueue> next = it.next();
@@ -404,10 +422,18 @@ public abstract class RebalanceImpl {
              */
             if (mq.getTopic().equals(topic)) {
                 /**
-                 * 如果mqSet中不包含 该MessageQueue，则将对应的ProcessQUeue设置为dropp
+                 * 如果mqSet中不包含 该MessageQueue，则将对应的ProcessQUeue设置为dropp。
+                 *
+                 * mqSet 是从RebalanceImpl的topicSubscribeInfoTable 中取出来的，这里判断的就是 processQueueTable的 某一个key MessageQueue 是否
+                 * 还在topicSubscribeInfoTable中。 如果不在则表示 processQueueTable中存在过期数据
+                 *
                  */
                 if (!mqSet.contains(mq)) {
                     pq.setDropped(true);
+                    /**
+                     * 判断是否有必要移除 这个MessageQueue
+                     *
+                     */
                     if (this.removeUnnecessaryMessageQueue(mq, pq)) {
                         it.remove();
                         changed = true;
@@ -419,6 +445,7 @@ public abstract class RebalanceImpl {
                             break;
                         case CONSUME_PASSIVELY:
                             pq.setDropped(true);
+
                             if (this.removeUnnecessaryMessageQueue(mq, pq)) {
                                 it.remove();
                                 changed = true;
@@ -431,17 +458,38 @@ public abstract class RebalanceImpl {
                     }
                 }
             }
-        }
+        }//end while 结束对 processQueueTable的更新
 
+        /**
+         * 创建pull请求，问题： 这里是RebalanceImpl类，存在子类RebalancePushImpl 和RebalancePullImpl， 两者都是用了pullRequest
+         */
         List<PullRequest> pullRequestList = new ArrayList<PullRequest>();
+        /**
+         * 注意我们这里遍历mqSet， mqSet 是从RebalanceImpl的topicSubscribeInfoTable 中取出来的
+         *
+         * topicSubscribeInfoTable又是定时从updateTopicRouteInfoFromNameServer  中更新的
+         *
+         */
         for (MessageQueue mq : mqSet) {
+            /**
+             * 如果processQueueTable中不包含mq
+             *
+             */
             if (!this.processQueueTable.containsKey(mq)) {
+                /**
+                 *
+                 */
                 if (isOrder && !this.lock(mq)) {
                     log.warn("doRebalance, {}, add a new mq failed, {}, because lock failed", consumerGroup, mq);
                     continue;
                 }
 
                 this.removeDirtyOffset(mq);
+                /**
+                 * 创建一个ProcessQueue 与 MessageQueue 进行对应
+                 *
+                 *
+                 */
                 ProcessQueue pq = new ProcessQueue();
                 long nextOffset = this.computePullFromWhere(mq);
                 if (nextOffset >= 0) {
@@ -467,6 +515,9 @@ public abstract class RebalanceImpl {
             }
         }
 
+        /**
+         * 将请求交给PullMessageService ，放置到了PullMessageService 的pullRequestQueue 队列中
+         */
         this.dispatchPullRequest(pullRequestList);
 
         return changed;

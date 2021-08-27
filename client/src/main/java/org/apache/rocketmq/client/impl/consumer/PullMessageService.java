@@ -104,6 +104,12 @@ public class PullMessageService extends ServiceThread {
     public void run() {
         log.info(this.getServiceName() + " service started");
 
+        /**
+         * 消息消费有两种模式： 所谓拉模式，是消费端主动发起拉请求，而推模式是消息到达消息服务器后，推送给消息消费者。
+         *
+         * 消息啦模式主要由客户端手动调用消息拉取API，消息推模式是消息服务器主动将消息推送到消息消费端。
+         *
+         */
         while (!this.isStopped()) {
             try {
                 /**

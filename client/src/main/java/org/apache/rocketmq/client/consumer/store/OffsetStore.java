@@ -51,6 +51,7 @@ public interface OffsetStore {
 
     /**
      * Persist the offset,may be in local storage or remote name server
+     *
      */
     void persist(final MessageQueue mq);
 

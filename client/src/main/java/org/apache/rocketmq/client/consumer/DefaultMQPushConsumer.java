@@ -243,6 +243,7 @@ public class DefaultMQPushConsumer extends ClientConfig implements MQPushConsume
 
     /**
      * Whether the unit of subscription group
+     * 订阅组的单位
      */
     private boolean unitMode = false;
 

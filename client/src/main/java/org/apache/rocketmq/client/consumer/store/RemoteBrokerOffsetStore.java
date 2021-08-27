@@ -149,6 +149,11 @@ public class RemoteBrokerOffsetStore implements OffsetStore {
 
     @Override
     public void persist(MessageQueue mq) {
+        /**
+         * 获取该MessageQueue的消费位移
+         * 集群模式中每一个MessageQueue只有一个Consumer消费。
+         *
+         */
         AtomicLong offset = this.offsetTable.get(mq);
         if (offset != null) {
             try {
@@ -187,6 +192,7 @@ public class RemoteBrokerOffsetStore implements OffsetStore {
 
     /**
      * Update the Consumer Offset in one way, once the Master is off, updated to Slave, here need to be optimized.
+     * 用一种方式更新消费者的偏移量，一旦主服务器关闭，更新到从服务器，这里需要优化。
      */
     private void updateConsumeOffsetToBroker(MessageQueue mq, long offset) throws RemotingException,
         MQBrokerException, InterruptedException, MQClientException {
@@ -195,15 +201,20 @@ public class RemoteBrokerOffsetStore implements OffsetStore {
 
     /**
      * Update the Consumer Offset synchronously, once the Master is off, updated to Slave, here need to be optimized.
+     * 用一种方式更新消费者的偏移量，一旦主服务器关闭，更新到从服务器，这里需要优化。
      */
     @Override
     public void updateConsumeOffsetToBroker(MessageQueue mq, long offset, boolean isOneway) throws RemotingException,
         MQBrokerException, InterruptedException, MQClientException {
+        /**
+         * 根据brokerName找到一个Broker地址，可以是master或者slave，然后将位移发送给他
+         */
         FindBrokerResult findBrokerResult = this.mQClientFactory.findBrokerAddressInAdmin(mq.getBrokerName());
         if (null == findBrokerResult) {
             this.mQClientFactory.updateTopicRouteInfoFromNameServer(mq.getTopic());
             findBrokerResult = this.mQClientFactory.findBrokerAddressInAdmin(mq.getBrokerName());
         }
+
 
         if (findBrokerResult != null) {
             UpdateConsumerOffsetRequestHeader requestHeader = new UpdateConsumerOffsetRequestHeader();

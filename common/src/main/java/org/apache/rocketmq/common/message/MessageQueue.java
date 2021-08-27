@@ -18,11 +18,17 @@ package org.apache.rocketmq.common.message;
 
 import java.io.Serializable;
 
+/**
+ * 一个消息队列同一时间只允许被一个消费者消费。一个消费者可以消费多个消息队列
+ *
+ */
 public class MessageQueue implements Comparable<MessageQueue>, Serializable {
     private static final long serialVersionUID = 6191200464116433425L;
+
     private String topic;
     private String brokerName;
     private int queueId;
+
 
     /**
      * MessageQueue的创建参考 ：org.apache.rocketmq.client.impl.factory.MQClientInstance#topicRouteData2TopicPublishInfo(java.lang.String, org.apache.rocketmq.common.protocol.route.TopicRouteData)
