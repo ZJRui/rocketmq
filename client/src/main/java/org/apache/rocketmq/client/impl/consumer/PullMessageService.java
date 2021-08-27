@@ -45,6 +45,9 @@ public class PullMessageService extends ServiceThread {
 
     public void executePullRequestLater(final PullRequest pullRequest, final long timeDelay) {
         if (!isStopped()) {
+            /**
+             * 延迟将请求放置到队列中
+             */
             this.scheduledExecutorService.schedule(new Runnable() {
                 @Override
                 public void run() {
@@ -56,6 +59,10 @@ public class PullMessageService extends ServiceThread {
         }
     }
 
+    /**
+     * 将pull请求放置到队列中
+     * @param pullRequest
+     */
     public void executePullRequestImmediately(final PullRequest pullRequest) {
         try {
             this.pullRequestQueue.put(pullRequest);
@@ -77,8 +84,15 @@ public class PullMessageService extends ServiceThread {
     }
 
     private void pullMessage(final PullRequest pullRequest) {
+        /**
+         * 找导对应的consumer
+         */
         final MQConsumerInner consumer = this.mQClientFactory.selectConsumer(pullRequest.getConsumerGroup());
         if (consumer != null) {
+            /**
+             * 注意pull Message取出consumer将consumer强制转为 PushConsumer，这里为什么可以强转？
+             *
+             */
             DefaultMQPushConsumerImpl impl = (DefaultMQPushConsumerImpl) consumer;
             impl.pullMessage(pullRequest);
         } else {
@@ -92,6 +106,9 @@ public class PullMessageService extends ServiceThread {
 
         while (!this.isStopped()) {
             try {
+                /**
+                 * 线程不断取出pull请求然后 拉消息
+                 */
                 PullRequest pullRequest = this.pullRequestQueue.take();
                 this.pullMessage(pullRequest);
             } catch (InterruptedException ignored) {

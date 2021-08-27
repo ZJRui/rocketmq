@@ -96,15 +96,54 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
     private static final long CONSUMER_TIMEOUT_MILLIS_WHEN_SUSPEND = 1000 * 30;
     private final InternalLogger log = ClientLogger.getLog();
     private final DefaultMQPushConsumer defaultMQPushConsumer;
+    /**
+     * 不管是PullConsumer还是PushConsumer 他内部都有一个RebalanceImpl, RebalanceImpl 有两种：RebalancePushImpl和RebalancePullImpl
+     *
+     * RebalanceImpl的doRebalance是依赖于Consumer的信息的，具体而言如下：
+     *
+     * 一个Consumer可以订阅多个topic。RebalanceImpl是针对每一个定义的topic做Rebalance：也就是rebalanceByTopic方法，在改方法内进行rebalance的时候 会使用Consumer的ConsumerGroup和Consumer的messageModel
+     * Consumer会设置其messageModel， messageModel不是针对Topic设置的，也就是不是说一个topic一个messageModel。
+     *
+     * 对于PushConsumer，我们创建后一个RebalancePushImpl，
+     *
+     */
     private final RebalanceImpl rebalanceImpl = new RebalancePushImpl(this);
     private final ArrayList<FilterMessageHook> filterMessageHookList = new ArrayList<FilterMessageHook>();
     private final long consumerStartTimestamp = System.currentTimeMillis();
     private final ArrayList<ConsumeMessageHook> consumeMessageHookList = new ArrayList<ConsumeMessageHook>();
     private final RPCHook rpcHook;
     private volatile ServiceState serviceState = ServiceState.CREATE_JUST;
+    /**
+     * 不管是Producer还是Consumer，比如DefaultMQProducerImpl ，DefaultMQPushConsumerImpl、DefaultMQPullConsumerIml中
+     * 都会有一个MQClientInstance 属性。 一个MQClientInstance内可以有多个Producer和consumer
+     *
+     * consumer和Producer的start最终都会调用MQClientInstance的start方法
+     */
     private MQClientInstance mQClientFactory;
     private PullAPIWrapper pullAPIWrapper;
     private volatile boolean pause = false;
+    /**
+     * rocketMq实现顺序消费的原理
+     *
+     * produce在发送消息的时候，把消息发到同一个队列（queue）中,消费者注册消息监听器为MessageListenerOrderly，这样就可以保证消费端只有一个线程去消费消息
+     *
+     * 注意：是把把消息发到同一个队列（queue），不是同一个topic，默认情况下一个topic包括4个queue
+     *
+     *
+     * 在PushConsumer的start方法中会判断 Consumer内部的MessageListener是 MessageListenerOrderly 还是MessageListenerConcurrently
+     *
+     *   if (this.getMessageListenerInner() instanceof MessageListenerOrderly) {
+     *                     this.consumeOrderly = true;
+     *                     this.consumeMessageService =
+     *                         new ConsumeMessageOrderlyService(this, (MessageListenerOrderly) this.getMessageListenerInner());
+     *                 } else if (this.getMessageListenerInner() instanceof MessageListenerConcurrently) {
+     *                     this.consumeOrderly = false;
+     *                     this.consumeMessageService =
+     *                         new ConsumeMessageConcurrentlyService(this, (MessageListenerConcurrently) this.getMessageListenerInner());
+     *                 }
+     *
+     *    问题： PullConsumer支持顺序消费吗，PullConsumer的start方法中会判断 MessageListener的类型吗
+     */
     private boolean consumeOrderly = false;
     private MessageListener messageListenerInner;
     private OffsetStore offsetStore;
@@ -210,7 +249,14 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
         this.offsetStore = offsetStore;
     }
 
+    /**
+     * 当前类是PushConsumer， 为什么PushConsumer内有pullMessage？
+     * @param pullRequest
+     */
     public void pullMessage(final PullRequest pullRequest) {
+        /**
+         * pullRequest 中的processQueue 是什么，哪里构建的？
+         */
         final ProcessQueue processQueue = pullRequest.getProcessQueue();
         if (processQueue.isDropped()) {
             log.info("the pull request[{}] is dropped.", pullRequest.toString());
@@ -608,6 +654,9 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
                 }
                 this.offsetStore.load();
 
+                /**
+                 * 设置consumer是顺序消费还是并发消费
+                 */
                 if (this.getMessageListenerInner() instanceof MessageListenerOrderly) {
                     this.consumeOrderly = true;
                     this.consumeMessageService =
@@ -1024,6 +1073,23 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
         }
     }
 
+    /**
+     *
+     * MQClientInstance.updateTopicRouteInfoFromNameServer(String, boolean, DefaultMQProducer)  (org.apache.rocketmq.client.impl.factory)
+     *     MQClientInstance.updateTopicRouteInfoFromNameServer(String)  (org.apache.rocketmq.client.impl.factory)
+     *         MQClientInstance.updateTopicRouteInfoFromNameServer()  (org.apache.rocketmq.client.impl.factory)
+     *             Anonymous in startScheduledTask() in MQClientInstance.run()  (org.apache.rocketmq.client.impl.factory)
+     *                 MQClientInstance.start()  (org.apache.rocketmq.client.impl.factory)
+     *                     DefaultMQPushConsumerImpl.start()  (org.apache.rocketmq.client.impl.consumer)
+     *                         DefaultMQPushConsumer.start()  (org.apache.rocketmq.client.consumer)
+     *                     DefaultMQPullConsumerImpl.start()  (org.apache.rocketmq.client.impl.consumer)
+     *                     DefaultMQProducerImpl.start(boolean)  (org.apache.rocketmq.client.impl.producer)
+     *
+     *
+     *
+     * @param topic
+     * @param info
+     */
     @Override
     public void updateTopicSubscribeInfo(String topic, Set<MessageQueue> info) {
         Map<String, SubscriptionData> subTable = this.getSubscriptionInner();

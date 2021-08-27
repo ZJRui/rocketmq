@@ -18,6 +18,15 @@ package org.apache.rocketmq.client.impl.consumer;
 
 import org.apache.rocketmq.common.message.MessageQueue;
 
+/**
+ * PullRequest有两个类：
+ * org.apache.rocketmq.broker.longpolling.PullRequest
+ * org.apache.rocketmq.client.impl.consumer.PullRequest
+ *
+ *
+ * 这里的clinet.consuemr PullRequest是在 哪里创建的？
+ *
+ */
 public class PullRequest {
     private String consumerGroup;
     private MessageQueue messageQueue;

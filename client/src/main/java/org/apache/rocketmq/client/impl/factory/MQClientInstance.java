@@ -93,9 +93,13 @@ public class MQClientInstance {
     private final long bootTimestamp = System.currentTimeMillis();
     /**
      * 对于新创建的Producer 在 start的时候 org.apache.rocketmq.client.impl.producer.DefaultMQProducerImpl#start(boolean) 会调用registerProducer，在register的时候会放置到producerTable
-     *
+     * key是ProducerGroup， 这表示在一个JVM进程内（准确来说应该是在一个MQClientInstance对象内） 一个ProducerGroup就仅有一个唯一的producer
      */
     private final ConcurrentMap<String/* group */, MQProducerInner> producerTable = new ConcurrentHashMap<String, MQProducerInner>();
+    /**
+     * key是consumerGroup，这表示在一个JVM进程内（准确来说应该是在一个MQClientInstance对象内） 一个ConsumerGroup就仅有一个唯一的consumer
+     *
+     */
     private final ConcurrentMap<String/* group */, MQConsumerInner> consumerTable = new ConcurrentHashMap<String, MQConsumerInner>();
     private final ConcurrentMap<String/* group */, MQAdminExtInner> adminExtTable = new ConcurrentHashMap<String, MQAdminExtInner>();
     private final NettyClientConfig nettyClientConfig;
@@ -116,6 +120,9 @@ public class MQClientInstance {
         }
     });
     private final ClientRemotingProcessor clientRemotingProcessor;
+    /**
+     * 创建MQClientInstance的时候会创建一个PullMessageService对象，在构造器中。
+     */
     private final PullMessageService pullMessageService;
     private final RebalanceService rebalanceService;
     private final DefaultMQProducer defaultMQProducer;
@@ -150,6 +157,10 @@ public class MQClientInstance {
 
         this.rebalanceService = new RebalanceService(this);
 
+        /**
+         * 注意 MQClientInstance 内部有一个defaultMQProducer属性，这个属性时RocketMQ 内部的producer，区别于应用程序中使用的producer
+         *  CLIENT_INNER_PRODUCER
+         */
         this.defaultMQProducer = new DefaultMQProducer(MixAll.CLIENT_INNER_PRODUCER_GROUP);
         this.defaultMQProducer.resetClientConfig(clientConfig);
 
@@ -262,6 +273,10 @@ public class MQClientInstance {
         return mqList;
     }
 
+    /**
+     *
+     * @throws MQClientException
+     */
     public void start() throws MQClientException {
 
         synchronized (this) {
@@ -276,14 +291,52 @@ public class MQClientInstance {
                         this.mQClientAPIImpl.fetchNameServerAddr();
                     }
                     // Start request-response channel
+                    /**
+                     * 创建Netty Client
+                     */
                     this.mQClientAPIImpl.start();
+                    /**
+                     * 启动定时任务 fetchNameServerAddr
+                     */
                     // Start various schedule tasks
                     this.startScheduledTask();
                     // Start pull service
+                    /**
+                     * pullMessageService 继承自ServiceThread 类型为Runnable，这里调用了他的start方法
+                     *
+                     * ServiceThread内部有一个属性 Thread thread;， 在start方法内会调用thread.start，从而启动了一个线程
+                     * 在PullMessageService的run方法中会执行：
+                     *  PullRequest pullRequest = this.pullRequestQueue.take();
+                     *  this.pullMessage(pullRequest);
+                     */
                     this.pullMessageService.start();
                     // Start rebalance service
+                    /**
+                     * 这里会启动一个线程执行 RebalanceService的run，在run方法中
+                     * 会执行doRebalance，在rebalance中会遍历 MQClientInstance的所有consumer，
+                     * 然后针对每一个consumer调用 consumer.doRebalance();
+                     *
+                     * 不同的consumer ,PullConsumer 和PushConsumer 有不同的doRebalance实现，但他们最终都是调用了rebalanceImpl的doRebalance
+                     *
+                     * RebalanceImpl.rebalanceByTopic(String, boolean)(2 usages)  (org.apache.rocketmq.client.impl.consumer)
+                     *     RebalanceImpl.doRebalance(boolean)  (org.apache.rocketmq.client.impl.consumer)
+                     *         DefaultMQPullConsumerImpl.doRebalance()  (org.apache.rocketmq.client.impl.consumer)
+                     *         DefaultMQPushConsumerImpl.doRebalance()  (org.apache.rocketmq.client.impl.consumer)
+                     *             DefaultMQPushConsumerImpl.resume()  (org.apache.rocketmq.client.impl.consumer)
+                     *                 DefaultMQPushConsumer.resume()  (org.apache.rocketmq.client.consumer)
+                     *                     PushConsumerImpl.resume()  (io.openmessaging.rocketmq.consumer)
+                     *                 MQClientInstance.resetOffset(String, String, Map<MessageQueue, Long>)  (org.apache.rocketmq.client.impl.factory)
+                     *                     DefaultMQPushConsumerImpl.resetOffsetByTimeStamp(long)  (org.apache.rocketmq.client.impl.consumer)
+                     *                     ClientRemotingProcessor.resetOffset(ChannelHandlerContext, RemotingCommand)  (org.apache.rocketmq.client.impl)
+                     *                         ClientRemotingProcessor.processRequest(ChannelHandlerContext, RemotingCommand)  (org.apache.rocketmq.client.impl)
+                     *
+                     */
                     this.rebalanceService.start();
                     // Start push service
+                    /**
+                     * Start push service
+                     * 注意这里又调用了Producer的start 传入的参数是false
+                     */
                     this.defaultMQProducer.getDefaultMQProducerImpl().start(false);
                     log.info("the client factory [{}] start OK", this.clientId);
                     this.serviceState = ServiceState.RUNNING;
@@ -297,6 +350,9 @@ public class MQClientInstance {
     }
 
     private void startScheduledTask() {
+        /**
+         * 第一个定时任务，fetchNameServer
+         */
         if (null == this.clientConfig.getNamesrvAddr()) {
             this.scheduledExecutorService.scheduleAtFixedRate(new Runnable() {
 
@@ -312,7 +368,21 @@ public class MQClientInstance {
         }
 
         /**
-         * MQClient 端启动定时任务 更新topic的路由信息
+         * 第二个定时任务
+         * MQClient 端启动定时任务 更新topic的路由信息。 具体更新哪些路由 会从consumerTable ，producerTable中遍历每一个consumer
+         * producer，取出其中的topic，然后更新每一个topic的路由信息
+         *
+         * MQClientInstance.updateTopicRouteInfoFromNameServer(String, boolean, DefaultMQProducer)  (org.apache.rocketmq.client.impl.factory)
+         *     MQClientInstance.updateTopicRouteInfoFromNameServer(String)  (org.apache.rocketmq.client.impl.factory)
+         *         MQClientInstance.updateTopicRouteInfoFromNameServer()  (org.apache.rocketmq.client.impl.factory)
+         *       这一步     Anonymous in startScheduledTask() in MQClientInstance.run()  (org.apache.rocketmq.client.impl.factory)
+         *                 MQClientInstance.start()  (org.apache.rocketmq.client.impl.factory)
+         *                     DefaultMQPushConsumerImpl.start()  (org.apache.rocketmq.client.impl.consumer)
+         *                         DefaultMQPushConsumer.start()  (org.apache.rocketmq.client.consumer)
+         *                     DefaultMQPullConsumerImpl.start()  (org.apache.rocketmq.client.impl.consumer)
+         *                     DefaultMQProducerImpl.start(boolean)  (org.apache.rocketmq.client.impl.producer)
+         *
+         * 这里的定时任务会调用 MQClientInstance的updateTopicRouteInfoFromNameServer
          */
         this.scheduledExecutorService.scheduleAtFixedRate(new Runnable() {
 
@@ -410,7 +480,13 @@ public class MQClientInstance {
             }
         }
 
+        /**
+         * 以上是收集所有的topic
+         */
         for (String topic : topicList) {
+            /**
+             * 更新每一个topic，获取topic的路由信心更新到consumer和producer中
+             */
             this.updateTopicRouteInfoFromNameServer(topic);
         }
     }
@@ -754,6 +830,7 @@ public class MQClientInstance {
                                     Entry<String, MQProducerInner> entry = it.next();
                                     MQProducerInner impl = entry.getValue();
                                     if (impl != null) {
+
                                         impl.updateTopicPublishInfo(topic, publishInfo);
                                     }
                                 }
@@ -772,6 +849,14 @@ public class MQClientInstance {
                                     Entry<String, MQConsumerInner> entry = it.next();
                                     MQConsumerInner impl = entry.getValue();
                                     if (impl != null) {
+                                        /**
+                                         *  Consumer和Producer启动的时候会执行MQClientInstance.start() ，然后 MQClientInstance的start中启动了一个定时任务startScheduledTask
+                                         *  这个定时任务会执行 updateTopicRouteInfoFromNameServer 最终会执行到该方法 updateTopicRouteInfoFromNameServer
+                                         *
+                                         *  针对 consumer如何做更新路由信息呢？ 如下调用了updateTopicSubscribeInfo
+                                         *
+                                         *
+                                         */
                                         impl.updateTopicSubscribeInfo(topic, subscribeInfo);
                                     }
                                 }
@@ -1197,6 +1282,9 @@ public class MQClientInstance {
     }
 
     public List<String> findConsumerIdList(final String topic, final String group) {
+        /**
+         * 随机选择一个broker地址
+         */
         String brokerAddr = this.findBrokerAddrByTopic(topic);
         if (null == brokerAddr) {
             this.updateTopicRouteInfoFromNameServer(topic);
@@ -1205,6 +1293,9 @@ public class MQClientInstance {
 
         if (null != brokerAddr) {
             try {
+                /**
+                 * 从broker地址 对应的broker查询 ConsumerGroup中的consumer列表
+                 */
                 return this.mQClientAPIImpl.getConsumerIdListByGroup(brokerAddr, group, 3000);
             } catch (Exception e) {
                 log.warn("getConsumerIdListByGroup exception, " + brokerAddr + " " + group, e);
@@ -1215,6 +1306,10 @@ public class MQClientInstance {
     }
 
     public String findBrokerAddrByTopic(final String topic) {
+        /**
+         * 找到topic的路由信息， 随机全出一个BrokerData（也就是一个Brokername）,
+         * 从被选中的BrokerName（该Brokername内存在多个Broker节点构成主从结构）中随机选择一个Broker节点返回其地址
+         */
         TopicRouteData topicRouteData = this.topicRouteTable.get(topic);
         if (topicRouteData != null) {
             List<BrokerData> brokers = topicRouteData.getBrokerDatas();

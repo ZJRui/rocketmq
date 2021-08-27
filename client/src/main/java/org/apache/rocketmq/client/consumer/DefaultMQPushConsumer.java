@@ -89,6 +89,17 @@ public class DefaultMQPushConsumer extends ClientConfig implements MQPushConsume
      * </p>
      *
      * This field defaults to clustering.
+     *
+     * 消息模型定义了将消息传递给每个消费者客户端的方式。RocketMQ支持两种消息模型:集群和广播。
+     * 如果设置了集群，具有相同consumerGroup的消费者客户端将只消费订阅的消息的分片，
+     * 从而实现负载平衡;相反，如果设置了广播，则每个消费者客户端将分别使用所有订阅的消息。该字段默认为集群。
+     *
+     *一个consumer可以订阅多个topic ：consumer.subscribe(topicName, "*");
+     * 最终是放置到了 COnsumer内部的 rebalanceImpl的 subscriptionInner中   this.rebalanceImpl.getSubscriptionInner().put(topic, subscriptionData);
+     *
+     *
+     *如果consumer的messageModel为集群，则对该consumer的所有topic都是按照集群模式消费。
+     *
      */
     private MessageModel messageModel = MessageModel.CLUSTERING;
 

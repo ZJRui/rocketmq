@@ -24,6 +24,9 @@ public class MessageQueue implements Comparable<MessageQueue>, Serializable {
     private String brokerName;
     private int queueId;
 
+    /**
+     * MessageQueue的创建参考 ：org.apache.rocketmq.client.impl.factory.MQClientInstance#topicRouteData2TopicPublishInfo(java.lang.String, org.apache.rocketmq.common.protocol.route.TopicRouteData)
+     */
     public MessageQueue() {
 
     }

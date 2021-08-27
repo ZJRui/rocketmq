@@ -29,6 +29,18 @@ import org.apache.rocketmq.common.message.MessageQueue;
 public class AllocateMessageQueueAveragely implements AllocateMessageQueueStrategy {
     private final InternalLogger log = ClientLogger.getLog();
 
+    /**
+     * 平均分配的实现算法
+     *
+     * 如果消费者的个数可以除尽队列的个数，那么就完全平均分。
+     * 如果不能除尽。那么靠前的消费者多消费一个队列，靠后的消费平均数个队列。
+     * 如果消费者的个数大于队列的个数，那么靠前的消费者消费一个队列，后面的不消费。
+     * @param consumerGroup current consumer group
+     * @param currentCID current consumer id
+     * @param mqAll message queue set in current topic
+     * @param cidAll consumer set in current consumer group
+     * @return
+     */
     @Override
     public List<MessageQueue> allocate(String consumerGroup, String currentCID, List<MessageQueue> mqAll,
         List<String> cidAll) {

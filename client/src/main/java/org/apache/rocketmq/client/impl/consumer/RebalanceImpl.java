@@ -42,9 +42,39 @@ import org.apache.rocketmq.common.protocol.heartbeat.SubscriptionData;
 
 public abstract class RebalanceImpl {
     protected static final InternalLogger log = ClientLogger.getLog();
+    /**
+     * 这个是什么关系？
+     */
     protected final ConcurrentMap<MessageQueue, ProcessQueue> processQueueTable = new ConcurrentHashMap<MessageQueue, ProcessQueue>(64);
+    /***
+     * 该属性的更新参考方法 updateTopicSubscribeInfo
+     */
     protected final ConcurrentMap<String/* topic */, Set<MessageQueue>> topicSubscribeInfoTable =
         new ConcurrentHashMap<String, Set<MessageQueue>>();
+    /**
+     *
+     * {
+     * 	"28751_PriorCommunication":{
+     * 		"tagsSet":[],
+     * 		"classFilterMode":false,
+     * 		"subString":"*",
+     * 		"codeSet":[],
+     * 		"topic":"28751_PriorCommunication",
+     * 		"expressionType":"TAG",
+     * 		"subVersion":1630047954019
+     *        },
+     * 	"%RETRY%28751_SysPriorCommunicationConsumer":{
+     * 		"tagsSet":[],
+     * 		"classFilterMode":false,
+     * 		"subString":"*",
+     * 		"codeSet":[],
+     * 		"topic":"%RETRY%28751_SysPriorCommunicationConsumer",
+     * 		"expressionType":"TAG",
+     * 		"subVersion":1630047954026
+     *    }
+     * }
+     *
+     */
     protected final ConcurrentMap<String /* topic */, SubscriptionData> subscriptionInner =
         new ConcurrentHashMap<String, SubscriptionData>();
     protected String consumerGroup;
@@ -255,7 +285,15 @@ public abstract class RebalanceImpl {
                 break;
             }
             case CLUSTERING: {
+                /**
+                 * 如果是集群模式，则一个ConsumerGroup中的3个consumer 只能有一个consumer接收到消息。
+                 *
+                 * 首先获取该topic的 messageQueue
+                 */
                 Set<MessageQueue> mqSet = this.topicSubscribeInfoTable.get(topic);
+                /**
+                 * 获取topic的所有consumerId
+                 */
                 List<String> cidAll = this.mQClientFactory.findConsumerIdList(topic, consumerGroup);
                 if (null == mqSet) {
                     if (!topic.startsWith(MixAll.RETRY_GROUP_TOPIC_PREFIX)) {
@@ -325,6 +363,32 @@ public abstract class RebalanceImpl {
         }
     }
 
+    /**
+     * RebalanceImpl.rebalanceByTopic(String, boolean)(2 usages)  (org.apache.rocketmq.client.impl.consumer)
+     *     RebalanceImpl.doRebalance(boolean)  (org.apache.rocketmq.client.impl.consumer)
+     *         DefaultMQPullConsumerImpl.doRebalance()  (org.apache.rocketmq.client.impl.consumer)
+     *         DefaultMQPushConsumerImpl.doRebalance()  (org.apache.rocketmq.client.impl.consumer)
+     *             DefaultMQPushConsumerImpl.resume()  (org.apache.rocketmq.client.impl.consumer)
+     *                 DefaultMQPushConsumer.resume()  (org.apache.rocketmq.client.consumer)
+     *                     PushConsumerImpl.resume()  (io.openmessaging.rocketmq.consumer)
+     *                 MQClientInstance.resetOffset(String, String, Map<MessageQueue, Long>)  (org.apache.rocketmq.client.impl.factory)
+     *                     DefaultMQPushConsumerImpl.resetOffsetByTimeStamp(long)  (org.apache.rocketmq.client.impl.consumer)
+     *                     ClientRemotingProcessor.resetOffset(ChannelHandlerContext, RemotingCommand)  (org.apache.rocketmq.client.impl)
+     *                         ClientRemotingProcessor.processRequest(ChannelHandlerContext, RemotingCommand)  (org.apache.rocketmq.client.impl)
+     *
+     *
+     *
+     *    首先祝贺易RebalanceImpl是在client端的，也就是Producer/Consumer端
+     *  （1）ClientRemotingProcessor 的processRequest如果收到的请求code是RESET_CONSUMER_CLIENT_OFFSET，则会执行 resetOffset，意味着如果客户端收到的请求的code是RESET_CONSUMER_CLIENT_OFFSET，则会执行 resetOffset
+     *  问题：谁发来的请求？
+     *  (2)
+     *
+     *
+     * @param topic
+     * @param mqSet
+     * @param isOrder
+     * @return
+     */
     private boolean updateProcessQueueTableInRebalance(final String topic, final Set<MessageQueue> mqSet,
         final boolean isOrder) {
         boolean changed = false;
@@ -335,7 +399,13 @@ public abstract class RebalanceImpl {
             MessageQueue mq = next.getKey();
             ProcessQueue pq = next.getValue();
 
+            /**
+             * MessageQueue是当前topic的
+             */
             if (mq.getTopic().equals(topic)) {
+                /**
+                 * 如果mqSet中不包含 该MessageQueue，则将对应的ProcessQUeue设置为dropp
+                 */
                 if (!mqSet.contains(mq)) {
                     pq.setDropped(true);
                     if (this.removeUnnecessaryMessageQueue(mq, pq)) {
@@ -380,6 +450,9 @@ public abstract class RebalanceImpl {
                         log.info("doRebalance, {}, mq already exists, {}", consumerGroup, mq);
                     } else {
                         log.info("doRebalance, {}, add a new mq, {}", consumerGroup, mq);
+                        /**
+                         *之类创建的是 client.consumer 包中的PullRequest
+                         */
                         PullRequest pullRequest = new PullRequest();
                         pullRequest.setConsumerGroup(consumerGroup);
                         pullRequest.setNextOffset(nextOffset);

@@ -133,6 +133,12 @@ public class DefaultMQProducerImpl implements MQProducerInner {
     protected BlockingQueue<Runnable> checkRequestQueue;
     protected ExecutorService checkExecutor;
     private ServiceState serviceState = ServiceState.CREATE_JUST;
+    /**
+     * 不管是Producer还是Consumer，比如DefaultMQProducerImpl ，DefaultMQPushConsumerImpl、DefaultMQPullConsumerIml中
+     * 都会有一个MQClientInstance 属性。 一个MQClientInstance内可以有多个Producer和consumer
+     *
+     * consumer和Producer的start最终都会调用MQClientInstance的start方法
+     */
     private MQClientInstance mQClientFactory;
     private ArrayList<CheckForbiddenHook> checkForbiddenHookList = new ArrayList<CheckForbiddenHook>();
     private int zipCompressLevel = Integer.parseInt(System.getProperty(MixAll.MESSAGE_COMPRESS_LEVEL, "5"));
@@ -199,7 +205,12 @@ public class DefaultMQProducerImpl implements MQProducerInner {
     public void start() throws MQClientException {
         this.start(true);
     }
-
+    /**
+     * 不管是Producer还是Consumer，比如DefaultMQProducerImpl ，DefaultMQPushConsumerImpl、DefaultMQPullConsumerIml中
+     * 都会有一个MQClientInstance 属性。 一个MQClientInstance内可以有多个Producer和consumer
+     *
+     * consumer和Producer的start最终都会调用MQClientInstance的start方法
+     */
     public void start(final boolean startFactory) throws MQClientException {
         switch (this.serviceState) {
             case CREATE_JUST:
@@ -214,6 +225,7 @@ public class DefaultMQProducerImpl implements MQProducerInner {
                 /**
                  * 获取MQClientInstance 对象，一般来说一个JVM就是一个MQClient，这个Client中有多个Producer 多个Consumer
                  * 问题： 是否一个JVM进程内就只有一个MQClinet？
+                 * 属性mqClientFactory 就是MQClientInstance
                  */
                 this.mQClientFactory = MQClientManager.getInstance().getOrCreateMQClientInstance(this.defaultMQProducer, rpcHook);
 
@@ -229,8 +241,14 @@ public class DefaultMQProducerImpl implements MQProducerInner {
                         null);
                 }
 
+                /**
+                 * 这里启动的时候讲  createTopicKey放入到 toplicPublisInfo中，注意 value是一个 new  TopicPublishInfo
+                 */
                 this.topicPublishInfoTable.put(this.defaultMQProducer.getCreateTopicKey(), new TopicPublishInfo());
 
+                /**
+                 * mQClientFactory的start 会启动一个线程PullMessageService 拉取消息
+                 */
                 if (startFactory) {
                     mQClientFactory.start();
                 }

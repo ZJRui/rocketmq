@@ -381,6 +381,12 @@ public class DefaultMQPullConsumerImpl implements MQConsumerInner {
     @Override
     public void doRebalance() {
         if (this.rebalanceImpl != null) {
+            /**
+             * pullConsumer为什么 isOrder为false
+             *
+             * PushConsumer中存在一个consumeOrderly属性， 该属性的取值是在consumer的start的方法中判断MessageListener的类型 如果是MessageListenerOrderly则为顺序消费，否则为并发消费
+             * 但是PullConsumer没有 consumerOrderly属性，因此PullConsumer全为false
+             */
             this.rebalanceImpl.doRebalance(false);
         }
     }
@@ -400,6 +406,15 @@ public class DefaultMQPullConsumerImpl implements MQConsumerInner {
 
     @Override
     public void updateTopicSubscribeInfo(String topic, Set<MessageQueue> info) {
+        /**
+         * consumer更新 订阅的topic比较简单，只是从rebalance中获取 其保存的topic的订阅信息。
+         * 一个Consumer有以一个RebalanceImpl，然后topic的订阅信息交给rebalanceImpl来实现
+         *
+         * RebalanceImpl中有两个属性
+         * （1） ConcurrentMap<String  topic, SubscriptionData> subscriptionInner
+         * （2） ConcurrentMap<String/* topic , Set<MessageQueue>> topicSubscribeInfoTable
+         *
+         * */
         Map<String, SubscriptionData> subTable = this.rebalanceImpl.getSubscriptionInner();
         if (subTable != null) {
             if (subTable.containsKey(topic)) {
@@ -630,6 +645,11 @@ public class DefaultMQPullConsumerImpl implements MQConsumerInner {
 
                 this.copySubscription();
 
+                /**
+                 * 在PushConsumer 的start方法中会 根据consumer中的MessageListener 类型来 设置consumer是顺序消费还是并发消费
+                 * 但是在PullConsumer中就没有这样的逻辑为什么？
+                 */
+
                 if (this.defaultMQPullConsumer.getMessageModel() == MessageModel.CLUSTERING) {
                     this.defaultMQPullConsumer.changeInstanceNameToPID();
                 }
@@ -640,6 +660,8 @@ public class DefaultMQPullConsumerImpl implements MQConsumerInner {
                 this.rebalanceImpl.setMessageModel(this.defaultMQPullConsumer.getMessageModel());
                 this.rebalanceImpl.setAllocateMessageQueueStrategy(this.defaultMQPullConsumer.getAllocateMessageQueueStrategy());
                 this.rebalanceImpl.setmQClientFactory(this.mQClientFactory);
+
+
 
                 this.pullAPIWrapper = new PullAPIWrapper(
                     mQClientFactory,
