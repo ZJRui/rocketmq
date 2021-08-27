@@ -321,6 +321,12 @@ public class MQClientInstance {
                      * 在PullMessageService的run方法中会执行：
                      *  PullRequest pullRequest = this.pullRequestQueue.take();
                      *  this.pullMessage(pullRequest);
+                     *
+                     *
+                     *  不管是PullConsumer还是PushConsumer  都会使用MQClientInstance， MQClientInstance启动的时候会启动PullMessageService
+                     *
+                     * 也就是说即便你使用的是PushConsumer，那么PushConsumer启动的时候导致MQClientInstance 也start 从而也会启动PullMessageService
+                     *
                      */
                     this.pullMessageService.start();
                     // Start rebalance service

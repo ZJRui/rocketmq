@@ -83,6 +83,11 @@ public class PullMessageService extends ServiceThread {
         return scheduledExecutorService;
     }
 
+    /**
+     * 消息消费有两种模式： 所谓拉模式，是消费端主动发起拉请求，而推模式是消息到达消息服务器后，推送给消息消费者
+     *
+     *  RocketMQ 消息推模式的实现基于拉模式，在拉模式上包装一层，一个拉取任务完成后开始下一个拉取任务 。
+     */
     private void pullMessage(final PullRequest pullRequest) {
         /**
          * 找导对应的consumer
@@ -91,6 +96,67 @@ public class PullMessageService extends ServiceThread {
         if (consumer != null) {
             /**
              * 注意pull Message取出consumer将consumer强制转为 PushConsumer，这里为什么可以强转？
+             *
+             * 根据消 费组名 从 MQClientlnstance 中获取消费者内部实现类 MQConsumerlnner ，令人
+             * 意外的 是这里将 consumer 强制转换为 DefaultMQPushConsumerlmpl ，也就是 PullMessage
+             * Service ，该线程只为 PUSH 模式服务， 那拉模式如何拉取消息呢？其实 细想也不难理解，
+             * PULL 模式 ， RocketMQ 只需要提供拉取消息 API 即可， 具体由应用程序显示调用拉取 API 。
+             *
+             * 我觉得：RocketMQ的推模式不是标准意义上的推模式。
+             *
+             * 可以这样理解推拉模式： 对于拉模式需要客户端主动调用API获取消息， 对于推模式，客户端无感知能够拿去到消息，而不需要自己主动调用API，rocketMQ
+             * 的推模式是通过一个线程 不断的拉取数据 将这个数据伪装成broker推送过来的。
+             *
+             *=======================
+             * 对于PushConsumer ，我们在创建Consumer的时候没有指定topic，但是通过PushConsumer的subscribe方法指定了主题。 PullConsumer中并没有subscribe方法
+             *
+             DefaultMQPushConsumer consumer = new DefaultMQPushConsumer("testVA");
+             consumer.setNamesrvAddr("192.168.102.73:9876");
+             consumer.setMessageModel(MessageModel.BROADCASTING);
+             consumer.subscribe("topicTestVA", "*");
+
+             *
+             * ================
+             *  对于拉模式 如何体现客户端 主动拉取呢？
+             *         //创建PullConsumer的时候没有指定topic，而是在创建MessageQueue的时候才指定了Topic
+             *         DefaultMQPullConsumer consumer = new DefaultMQPullConsumer("please_rename_unique_group_name_5");
+             *         consumer.setNamesrvAddr("127.0.0.1:9876");
+             *         consumer.start();
+             *
+             *         try {
+             *             MessageQueue mq = new MessageQueue();
+             *             mq.setQueueId(0);
+             *             mq.setTopic("TopicTest3");
+             *             mq.setBrokerName("vivedeMacBook-Pro.local");
+             *
+             *             long offset = 26;
+             *
+             *             long beginTime = System.currentTimeMillis();
+             *             PullResult pullResult = consumer.pullBlockIfNotFound(mq, null, offset, 32);
+             *             System.out.printf("%s%n", System.currentTimeMillis() - beginTime);
+             *             System.out.printf("%s%n", pullResult);
+             *         } catch (Exception e) {
+             *             e.printStackTrace();
+             *         }
+             *
+             * 咋这段代码中我们创建了一个Consumer，然后创建了一个MessageQueue，手动调用API拉取这个MessageQUeue 得到一个PullResult
+             *
+             * ================================
+             *
+             * 另外 不管是PullConsumer 还是PushConsumer 他们的start方法都会调用 MQClientInstance的start方法，
+             * 在MQClientInstance的start方法内会启动 PullMessageService线程，也就是说不管是Pull 还是Push。 PullMessageService都会存在。
+             * 同时启动的Consumer 还会 注册到MQClientInstance， key是ProducerGroup，value是Consumer，也就是说consumerTable中既有
+             *
+             *MQClientInstance.consumerTable.putIfAbsent(group, consumer);
+             *=======================
+             * 如何保证 下面的强转不会出错？ 也就是如何保证从consumerTable中 根据group取出的 Consumer一定是 PushConsumer？
+             *
+             *  （1）问题一： 我们能创建一个PullConsumer 和一个PushConsumer，但是这两个consumer的group相同吗？ 答案不可以，一个ConsumerGroup在MQClientInstance中只能有一个Consumer
+             *   （2）pullMessage 的请求参数 PullRequest是怎么来的？ 也就是PullRequest对象是怎么来的 主要有两个地方
+             *                  * (1)一个是在RocketMQ根据PullRequest拉取任务执行完一次消息拉取任务后，又将PullRequest对象放入到PullRequestQueue
+             *                  * （2）第二个是在RebalanceImpl中创建， 这里是PullRequest对象真正创建的地方org.apache.rocketmq.client.impl.consumer.RebalanceImpl#updateProcessQueueTableInRebalance(java.lang.String, java.util.Set, boolean)
+             *     我们只需要保证在创建PullRequest的时候 指定给PullRequest的ConsumerGroup对应的consumer为PushConsumer，然后在这里我们根据PullRequest中的 ConsumerGroup
+             *     在consumerTable中取出的consumer就必然是PushConsumer
              *
              */
             DefaultMQPushConsumerImpl impl = (DefaultMQPushConsumerImpl) consumer;
@@ -114,6 +180,10 @@ public class PullMessageService extends ServiceThread {
             try {
                 /**
                  * 线程不断取出pull请求然后 拉消息
+                 * 那 PullRequest 是什么时候添加的呢？
+                 * 主要有两个地方
+                 * (1)一个是在RocketMQ根据PullRequest拉取任务执行完一次消息拉取任务后，又将PullRequest对象放入到PullRequestQueue
+                 * （2）第二个是在RebalanceImpl中创建， 这里是PullRequest对象真正创建的地方org.apache.rocketmq.client.impl.consumer.RebalanceImpl#updateProcessQueueTableInRebalance(java.lang.String, java.util.Set, boolean)
                  */
                 PullRequest pullRequest = this.pullRequestQueue.take();
                 this.pullMessage(pullRequest);

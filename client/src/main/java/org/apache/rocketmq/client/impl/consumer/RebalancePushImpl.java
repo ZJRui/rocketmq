@@ -152,6 +152,10 @@ public class RebalancePushImpl extends RebalanceImpl {
             case CONSUME_FROM_MAX_OFFSET:
             case CONSUME_FROM_LAST_OFFSET: {
                 long lastOffset = offsetStore.readOffset(mq, ReadOffsetType.READ_FROM_STORE);
+                /**
+                 * 如果从消息进度服务OffsetStore读取到MessageQueue中的偏移量不小于0，则使用读取到的偏移量，
+                 * 只有在读到的偏移量小于0时，才会使用Consume_from_last_offset\ first_offset 、from——timestamp 等策略
+                 */
                 if (lastOffset >= 0) {
                     result = lastOffset;
                 }

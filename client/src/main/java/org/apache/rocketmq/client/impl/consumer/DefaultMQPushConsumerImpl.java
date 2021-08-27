@@ -681,6 +681,10 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
 
                 /**
                  * 设置consumer是顺序消费还是并发消费
+                 *
+                 * 根据是否是顺序消费，创建消费端线程池服务。 ConsumeMessageService主要负责消息消费，内部维护一个线程池.
+                 * PullConsumer的start方法中 并没有这段 逻辑，也就是说PullConsumer中并没有 根据MessageListener的类型创建ConsumeMessageService
+                 *
                  */
                 if (this.getMessageListenerInner() instanceof MessageListenerOrderly) {
                     this.consumeOrderly = true;
@@ -701,6 +705,8 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
                  * 但是对于consumer来说 一个JVM内同一个ConsumerGroup 不可以多个Consumer，如下校验ConsumerGroup是否已经存在Consumer
                  *
                  * 确保同一个MQClientInstance内 同一个ConsumerGroup内只有一个Consumer
+                 *
+                 * 这里将 PushConsumer放入到MQClientInstance的consumerTable中。
                  *
                  */
                 boolean registerOK = mQClientFactory.registerConsumer(this.defaultMQPushConsumer.getConsumerGroup(), this);
@@ -907,6 +913,13 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
     }
 
     private void copySubscription() throws MQClientException {
+        /**
+         * 构建主题订阅信息SubscriptionData并加入到RebalanceImpl的订阅消息中。订阅关系来源主要有两个
+         * （1）通过调用DefaultMQPushConsumer的subscribe方法
+         * （2）订阅重试主题消息。从这里可以看出，rocketmQ消息重试是以消费组为单位，而不是主题。 消息重试主题名为 %retry%+消费组名。
+         * 消费者在启动的时候会自动订阅该主题，参与该主题的消息队列负载。
+         *
+         */
         try {
             Map<String, String> sub = this.defaultMQPushConsumer.getSubscription();
             if (sub != null) {
@@ -988,6 +1001,71 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
         }
     }
 
+    /**
+     *  PullConsumer 并没有 subscribe方法。
+     *
+     *
+     *
+     *              * 注意pull Message取出consumer将consumer强制转为 PushConsumer，这里为什么可以强转？
+     *              *
+     *              * 根据消 费组名 从 MQClientlnstance 中获取消费者内部实现类 MQConsumerlnner ，令人
+     *              * 意外的 是这里将 consumer 强制转换为 DefaultMQPushConsumerlmpl ，也就是 PullMessage
+     *              * Service ，该线程只为 PUSH 模式服务， 那拉模式如何拉取消息呢？其实 细想也不难理解，
+     *              * PULL 模式 ， RocketMQ 只需要提供拉取消息 API 即可， 具体由应用程序显示调用拉取 API 。
+     *              *
+     *              * 我觉得：RocketMQ的推模式不是标准意义上的推模式。
+     *              *
+     *              * 可以这样理解推拉模式： 对于拉模式需要客户端主动调用API获取消息， 对于推模式，客户端无感知能够拿去到消息，而不需要自己主动调用API，rocketMQ
+     *              * 的推模式是通过一个线程 不断的拉取数据 将这个数据伪装成broker推送过来的。
+     *              *
+     *              *=======================
+     *              * 对于PushConsumer ，我们在创建Consumer的时候没有指定topic，但是通过PushConsumer的subscribe方法指定了主题。 PullConsumer中并没有subscribe方法
+     *              *
+     *              DefaultMQPushConsumer consumer = new DefaultMQPushConsumer("testVA");
+     *              consumer.setNamesrvAddr("192.168.102.73:9876");
+     *              consumer.setMessageModel(MessageModel.BROADCASTING);
+     *              consumer.subscribe("topicTestVA", "*");
+     *
+     *              *
+     *              * ================
+     *              *  对于拉模式 如何体现客户端 主动拉取呢？
+     *              *         //创建PullConsumer的时候没有指定topic，而是在创建MessageQueue的时候才指定了Topic
+     *              *         DefaultMQPullConsumer consumer = new DefaultMQPullConsumer("please_rename_unique_group_name_5");
+     *              *         consumer.setNamesrvAddr("127.0.0.1:9876");
+     *              *         consumer.start();
+     *              *
+     *              *         try {
+     *              *             MessageQueue mq = new MessageQueue();
+     *              *             mq.setQueueId(0);
+     *              *             mq.setTopic("TopicTest3");
+     *              *             mq.setBrokerName("vivedeMacBook-Pro.local");
+     *              *
+     *              *             long offset = 26;
+     *              *
+     *              *             long beginTime = System.currentTimeMillis();
+     *              *             PullResult pullResult = consumer.pullBlockIfNotFound(mq, null, offset, 32);
+     *              *             System.out.printf("%s%n", System.currentTimeMillis() - beginTime);
+     *              *             System.out.printf("%s%n", pullResult);
+     *              *         } catch (Exception e) {
+     *              *             e.printStackTrace();
+     *              *         }
+     *              *
+     *              * 咋这段代码中我们创建了一个Consumer，然后创建了一个MessageQueue，手动调用API拉取这个MessageQUeue 得到一个PullResult
+     *              *
+     *              * ================================
+     *              *
+     *              * 另外 不管是PullConsumer 还是PushConsumer 他们的start方法都会调用 MQClientInstance的start方法，
+     *              * 在MQClientInstance的start方法内会启动 PullMessageService线程，也就是说不管是Pull 还是Push。 PullMessageService都会存在。
+     *              *
+     *              *
+     *              *
+     *
+     *
+     *
+     * @param topic
+     * @param messageSelector
+     * @throws MQClientException
+     */
     public void subscribe(final String topic, final MessageSelector messageSelector) throws MQClientException {
         try {
             if (messageSelector == null) {
