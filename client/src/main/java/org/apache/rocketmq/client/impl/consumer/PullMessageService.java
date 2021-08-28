@@ -107,6 +107,8 @@ public class PullMessageService extends ServiceThread {
              * 可以这样理解推拉模式： 对于拉模式需要客户端主动调用API获取消息， 对于推模式，客户端无感知能够拿去到消息，而不需要自己主动调用API，rocketMQ
              * 的推模式是通过一个线程 不断的拉取数据 将这个数据伪装成broker推送过来的。
              *
+             * RocketMQ 并没有真正实现推模式，而是消费者主动向消息服务器拉取消息， RocketMQ 推模式是循环向消息服务端发送消息拉取请求，《RocketMQ技术内幕 5.4.3 消息拉取长轮询机制分析》
+             *
              *=======================
              * 对于PushConsumer ，我们在创建Consumer的时候没有指定topic，但是通过PushConsumer的subscribe方法指定了主题。 PullConsumer中并没有subscribe方法
              *
@@ -177,6 +179,10 @@ public class PullMessageService extends ServiceThread {
              *
              */
             DefaultMQPushConsumerImpl impl = (DefaultMQPushConsumerImpl) consumer;
+
+            /**
+             * PullRequest中持有MessageQueue和ProcessQueue，在pullmessage 方法中 会更新ProcessQueue的上次拉取时间为当前时间
+             */
             impl.pullMessage(pullRequest);
         } else {
             log.warn("No matched consumer for the PullRequest {}, drop it", pullRequest);

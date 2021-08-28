@@ -23,6 +23,13 @@ public class PullSysFlag {
     private final static int FLAG_CLASS_FILTER = 0x1 << 3;
     private final static int FLAG_LITE_PULL_MESSAGE = 0x1 << 4;
 
+    /**
+     * 构建消息拉取系统标记  sysFlag
+     * flag_commit_offset：表示从内存中读取的消费进度大于0，则设置该标记位
+     * flag_suspend：表示消息拉取时支持挂起
+     * flag_subscription：消息过滤机制为表达式，则设置该标记位
+     * flag_class_filter：消息过滤机制为类过滤模式
+     */
     public static int buildSysFlag(final boolean commitOffset, final boolean suspend,
         final boolean subscription, final boolean classFilter) {
         int flag = 0;

@@ -686,7 +686,7 @@ public class DefaultMQPushConsumer extends ClientConfig implements MQPushConsume
      *
      * This method will be removed or it's visibility will be changed in a certain version after April 5, 2020, so
      * please do not use this method.
-     *
+     *将消息发送回代理，该消息将在将来重新传递。2020年4月5日以后，这个方法将会被删除或者在某个版本中它的能见度会发生变化，所以请不要使用这个方法。
      * @param msg Message to send back.
      * @param delayLevel delay level.
      * @throws RemotingException if there is any network-tier error.

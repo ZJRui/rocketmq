@@ -440,10 +440,11 @@ public abstract class RebalanceImpl {
                         log.info("doRebalance, {}, remove unnecessary mq, {}", consumerGroup, mq);
                     }
                 } else if (pq.isPullExpired()) {
+                    //上面if中判断当前时间 距离ProcessQueue中的上一次拉取时间属性lastPulltimeStamp 是否超过120s，如果是则认为过期
                     switch (this.consumeType()) {
-                        case CONSUME_ACTIVELY:
+                        case CONSUME_ACTIVELY://PULL
                             break;
-                        case CONSUME_PASSIVELY:
+                        case CONSUME_PASSIVELY://push
                             pq.setDropped(true);
 
                             if (this.removeUnnecessaryMessageQueue(mq, pq)) {

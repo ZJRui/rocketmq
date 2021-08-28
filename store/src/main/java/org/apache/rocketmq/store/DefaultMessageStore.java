@@ -137,6 +137,8 @@ public class DefaultMessageStore implements MessageStore {
         this.cleanConsumeQueueService = new CleanConsumeQueueService();
         this.storeStatsService = new StoreStatsService();
         this.indexService = new IndexService(this);
+
+
         if (!messageStoreConfig.isEnableDLegerCommitLog()) {
             this.haService = new HAService(this);
         } else {
@@ -235,6 +237,13 @@ public class DefaultMessageStore implements MessageStore {
              * 2. DLedger committedPos may be missing, so the maxPhysicalPosInLogicQueue maybe bigger that maxOffset returned by DLedgerCommitLog, just let it go;
              * 3. Calculate the reput offset according to the consume queue;
              * 4. Make sure the fall-behind messages to be dispatched before starting the commitlog, especially when the broker role are automatically changed.
+             *
+             *
+             * 1. 确保在恢复过程中根据commitlog的最大物理偏移量截断快进消息;
+             * * 2。DLedger committedPos可能丢失，所以maxPhysicalPosInLogicQueue可能比DLedger commitlog返回的maxOffset更大，就让它去吧;
+             * * 3。根据消费队列计算重放偏移量;
+             * * 4。确保在启动commitlog之前分发滞后消息，特别是在代理角色被自动更改时。
+             *
              */
             long maxPhysicalPosInLogicQueue = commitLog.getMinOffset();
             for (ConcurrentMap<Integer, ConsumeQueue> maps : this.consumeQueueTable.values()) {
@@ -262,6 +271,11 @@ public class DefaultMessageStore implements MessageStore {
             log.info("[SetReputOffset] maxPhysicalPosInLogicQueue={} clMinOffset={} clMaxOffset={} clConfirmedOffset={}",
                 maxPhysicalPosInLogicQueue, this.commitLog.getMinOffset(), this.commitLog.getMaxOffset(), this.commitLog.getConfirmOffset());
             this.reputMessageService.setReputFromOffset(maxPhysicalPosInLogicQueue);
+
+            /**
+             * 这里启动一个线程
+             *
+             */
             this.reputMessageService.start();
 
             /**
@@ -568,29 +582,65 @@ public class DefaultMessageStore implements MessageStore {
         long beginTime = this.getSystemClock().now();
 
         GetMessageStatus status = GetMessageStatus.NO_MESSAGE_IN_QUEUE;
+        /**
+         * nextBeginOffset：待查找的队列偏移量
+         */
         long nextBeginOffset = offset;
+        /**
+         * 当前消息队列最小偏移量
+         */
         long minOffset = 0;
+
+        /**
+         * 当前消息队列最大偏移量
+         */
         long maxOffset = 0;
 
         GetMessageResult getResult = new GetMessageResult();
 
+        /**
+         * 当前commitLog文件最大偏移量
+         *
+         */
         final long maxOffsetPy = this.commitLog.getMaxOffset();
 
+        /**
+         * 根据主题名称与队列编号获取消息消费队列
+         *
+         */
         ConsumeQueue consumeQueue = findConsumeQueue(topic, queueId);
         if (consumeQueue != null) {
             minOffset = consumeQueue.getMinOffsetInQueue();
             maxOffset = consumeQueue.getMaxOffsetInQueue();
 
+            /**
+             * 消息偏移量异常情况下校对下一次拉取偏移量。 异常情况对offset的校验很关键，必须正常校对拉取偏移量，否则消息消费将出现堆积。
+             *
+             * （1）maxOffset=0，表示当前消费队列中没有消息，拉取结果No_message_in_queue
+             * 如果当前broker节点为主节点或者offsetCheckInSlave为false，下次拉取偏移量依然为offset
+             * 如果当前broker节点为从节点， offsetCheckInSlave为true，设置下次拉取偏移量为0
+             */
             if (maxOffset == 0) {
                 status = GetMessageStatus.NO_MESSAGE_IN_QUEUE;
                 nextBeginOffset = nextOffsetCorrection(offset, 0);
             } else if (offset < minOffset) {
+                /**
+                 * offset< minOffset表示待拉取消息偏移量小于队列的起始偏移量，拉取结果为 offset_too_small
+                 * 如果当前broker节点为主节点，或者offsetCheckInSlave为false，下次拉取偏移量依然为offset
+                 * 如果当前broker为从节电且offsetCheckInSlave为true，下次拉取偏移量设置为minOffset
+                 */
                 status = GetMessageStatus.OFFSET_TOO_SMALL;
                 nextBeginOffset = nextOffsetCorrection(offset, minOffset);
             } else if (offset == maxOffset) {
+                /**
+                 * 待拉取偏移量等于队列最大偏移量，拉取结果为offset_overflow_one 。下次拉取偏移量依然为offset
+                 */
                 status = GetMessageStatus.OFFSET_OVERFLOW_ONE;
                 nextBeginOffset = nextOffsetCorrection(offset, offset);
             } else if (offset > maxOffset) {
+                /**
+                 * 表示偏移量越界，拉取结果offset_overflow_badly
+                 */
                 status = GetMessageStatus.OFFSET_OVERFLOW_BADLY;
                 if (0 == minOffset) {
                     nextBeginOffset = nextOffsetCorrection(offset, minOffset);
@@ -598,6 +648,10 @@ public class DefaultMessageStore implements MessageStore {
                     nextBeginOffset = nextOffsetCorrection(offset, maxOffset);
                 }
             } else {
+                /**
+                 * 瑞国待拉取偏移量大于minOffset 小于maxOffset，则从当前offset处尝试拉取32条消息，根据消息队列偏移量ConsumeQueue从commitlog文件中查找消息。
+                 */
+
                 SelectMappedBufferResult bufferConsumeQueue = consumeQueue.getIndexBuffer(offset);
                 if (bufferConsumeQueue != null) {
                     try {
@@ -1510,7 +1564,18 @@ public class DefaultMessageStore implements MessageStore {
     }
 
     public void putMessagePositionInfo(DispatchRequest dispatchRequest) {
+        /**
+         * 1：调用findConsumeQueue（），根据消息的topic以及消息所属的ConsumeQueueId，找到对应的ConsumeQueue。
+         *
+         * findConsumeQueue（）会先从consumeQueueTable中查询topic的ConsumeQueueMap，如果未找到，便会为Topic创建一个新的ConcurrentMap<Integer/* queueId ,
+         ConsumeQueue >，存放到表中。
+         *
+         *接着在从Topic的ConcurrentMap中，根据QueueId，查询ConsumeQueue，如果未找到，便也会创建一个新的ConsumeQueue，存放到Map中。ConsumeQueue便是此时被创建的。
+         */
         ConsumeQueue cq = this.findConsumeQueue(dispatchRequest.getTopic(), dispatchRequest.getQueueId());
+        /**
+         * 2：当找到消息对应的ConsumeQueue后，便调用ConsumeQueue的putMessagePositionInfoWrapper（）方法，更新ConsumeQueue。
+         */
         cq.putMessagePositionInfoWrapper(dispatchRequest);
     }
 
@@ -1571,6 +1636,10 @@ public class DefaultMessageStore implements MessageStore {
             switch (tranType) {
                 case MessageSysFlag.TRANSACTION_NOT_TYPE:
                 case MessageSysFlag.TRANSACTION_COMMIT_TYPE:
+                    /**
+                     * 当ReputMessageService调用了CommitLogDispatcherBuildConsumeQueue的dispatch（）后，
+                     * CommitLogDispatcherBuildConsumeQueue便会调用 DefaultMessageStore.this.putMessagePositionInfo(request)：
+                     */
                     DefaultMessageStore.this.putMessagePositionInfo(request);
                     break;
                 case MessageSysFlag.TRANSACTION_PREPARED_TYPE:
@@ -1882,6 +1951,28 @@ public class DefaultMessageStore implements MessageStore {
         }
     }
 
+    /**
+     *
+     * 如果当开启了长轮询机制 ， PullRequestHoldServic e 线程会每隔 5s 被唤醒去
+     * 尝试检测是否有新消 息 的 到来直到超时 ， 如果被挂起， 需要等待 缸 ，消息拉取实 时性比较
+     * 差 ，为了避免这种情况 ， RocketMQ 引 入另外一种机制： 当 消息到达时唤醒挂起线程触发一
+     * 次检查
+     *
+     * 问题： 既然是当消息到达时 唤醒线程，那么不应该是在消息到达时才去做某件事情吗？ 为什么ReputMessageService的run方法中是每个1秒做一次doReput
+     *
+     * doReput逻辑好像也不是在消息到达时才会做的
+     *
+     *
+     * ReputMessageS 巳rvice 线程主要是根据 Commitlog 将消息转发到 Consume Queue 、 Ind ex
+     * 等文件，
+     *
+     * 之前在讲到消息存储的时候，提到每个Broker在初始化的时候都会初始化一个MessageStore负责存储消息，
+     * 而MessageStore在初始化的时候，同样会启动一个ReputMessageService，ReputMessageService就是用来更新ConsumeQueue中消息偏移的。
+     *
+     * ReputMessageService本身是一个线程，它启动后便会在循环中不断调用doReput（）方法，用来通知ConsumeQueue进行更新。
+     *
+     *
+     */
     class ReputMessageService extends ServiceThread {
 
         private volatile long reputFromOffset = 0;
@@ -1927,13 +2018,24 @@ public class DefaultMessageStore implements MessageStore {
             }
             for (boolean doNext = true; this.isCommitLogAvailable() && doNext; ) {
 
+                /**
+                 * 如果允许消 息重复 ， 设置重新推送偏移量为 Commitlog 文件的提交偏移量 ，如果不允
+                 * 许重复推送则设置重新推送偏移为 commitlog 当 前最大的偏移量。
+                 */
                 if (DefaultMessageStore.this.getMessageStoreConfig().isDuplicationEnable()
                     && this.reputFromOffset >= DefaultMessageStore.this.getConfirmOffset()) {
                     break;
                 }
 
+                /**
+                 * 获取CommitLog中存储的新消息。
+                 * reputFromOffset记录了本次需要拉取的消息在CommitLog中的偏移。这里将reputFromOffset传递给CommitLog，获取CommitLog在reputFromOffset处存储的消息。
+                 */
                 SelectMappedBufferResult result = DefaultMessageStore.this.commitLog.getData(reputFromOffset);
                 if (result != null) {
+                    /**
+                     * 如果上面获取的消息不为空，则表明有新消息被存储到CommitLog中，此时便会通知ConsumeQueue更新消息偏移。
+                     */
                     try {
                         this.reputFromOffset = result.getStartOffset();
 
@@ -1944,16 +2046,43 @@ public class DefaultMessageStore implements MessageStore {
 
                             if (dispatchRequest.isSuccess()) {
                                 if (size > 0) {
+                                    /**
+                                     * ，这里调用 DefaultMessageStore.this.doDispatch(dispatchRequest) 来通知ConsumeQueue。
+                                     *
+                                     * DefaultMessageStore中存储了一个dispatcherList，其中存放了几个CommitLogDispatcher对象，它们都是用来监听CommitLog中新消息存储的。
+                                     *
+                                     * this.dispatcherList = new LinkedList<>();
+                                     * this.dispatcherList.addLast(new CommitLogDispatcherBuildConsumeQueue());
+                                     * this.dispatcherList.addLast(new CommitLogDispatcherBuildIndex());
+                                     * doDispatch（）会遍历CommitLogDispatcher，调用它们的dispatch（）方法。其中专门用来通知ConsumeQueue的Dispatcher是CommitLogDispatcherBuildConsumeQueue。
+                                     *
+                                     * Q1:
+                                     * 当ReputMessageService调用了CommitLogDispatcherBuildConsumeQueue的dispatch（）后，
+                                     * CommitLogDispatcherBuildConsumeQueue便会调用 DefaultMessageStore.this.putMessagePositionInfo(request)：
+                                     *
+                                     */
                                     DefaultMessageStore.this.doDispatch(dispatchRequest);
 
+                                    /**
+                                     * 当新消息到达CommitLog时，ReputMessageService线程负责加盖焖消息转发给ConsumeQueu，IndexFile。 如果Broker端开启了长轮训并且角色主节点，则
+                                     * 最终将调用PullRequestHoldService线程的notifyMessageArriving方法唤醒挂起线程，判断当前消费队列最大偏移量是否
+                                     * 大于待拉取偏移量，如果大于则拉取消息。长轮询模式使得消息拉取能够实现准实时。
+                                     *
+                                     */
                                     if (BrokerRole.SLAVE != DefaultMessageStore.this.getMessageStoreConfig().getBrokerRole()
                                         && DefaultMessageStore.this.brokerConfig.isLongPollingEnable()) {
+                                        /**
+                                         * 炸裂的arriving 最终会调用 pullRequestHoldService.notifyMessageArriving
+                                         */
                                         DefaultMessageStore.this.messageArrivingListener.arriving(dispatchRequest.getTopic(),
                                             dispatchRequest.getQueueId(), dispatchRequest.getConsumeQueueOffset() + 1,
                                             dispatchRequest.getTagsCode(), dispatchRequest.getStoreTimestamp(),
                                             dispatchRequest.getBitMap(), dispatchRequest.getPropertiesMap());
                                     }
 
+                                    /**
+                                     * 更新reputFromOffset，设置为下次需要拉取的消息在CommitLog中的偏移。
+                                     */
                                     this.reputFromOffset += size;
                                     readSize += size;
                                     if (DefaultMessageStore.this.getMessageStoreConfig().getBrokerRole() == BrokerRole.SLAVE) {
@@ -2000,6 +2129,12 @@ public class DefaultMessageStore implements MessageStore {
 
             while (!this.isStopped()) {
                 try {
+                    /**
+                     * 之前在讲到消息存储的时候，提到每个Broker在初始化的时候都会初始化一个MessageStore负责存储消息，而MessageStore在初始化的时候，
+                     * 同样会启动一个ReputMessageService，ReputMessageService就是用来更新ConsumeQueue中消息偏移的。
+                     *
+                     * ReputMessageService本身是一个线程，它启动后便会在循环中不断调用doReput（）方法，用来通知ConsumeQueue进行更新。
+                     */
                     Thread.sleep(1);
                     this.doReput();
                 } catch (Exception e) {

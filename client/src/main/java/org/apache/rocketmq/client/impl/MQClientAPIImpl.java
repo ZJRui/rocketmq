@@ -714,6 +714,9 @@ public class MQClientAPIImpl {
         final CommunicationMode communicationMode,
         final PullCallback pullCallback
     ) throws RemotingException, MQBrokerException, InterruptedException {
+        /**
+         * 这里指定 pull请求的 code 为pull_message
+         */
         RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.PULL_MESSAGE, requestHeader);
 
         switch (communicationMode) {
@@ -721,9 +724,16 @@ public class MQClientAPIImpl {
                 assert false;
                 return null;
             case ASYNC:
+                /**
+                 * 注意如果是异步模式的时候 我们才需要传递一个PullCallback， 然后当收到结果的时候就会回调PullCallback的onSuccess方法
+                 */
                 this.pullMessageAsync(addr, request, timeoutMillis, pullCallback);
                 return null;
             case SYNC:
+                /**
+                 * 如果是同步模式，在这里的pullMessageSync方法中 会 首先发送请求
+                 * 然后执行processPullResponse方法返回处理结果
+                 */
                 return this.pullMessageSync(addr, request, timeoutMillis);
             default:
                 assert false;
@@ -770,8 +780,14 @@ public class MQClientAPIImpl {
         final RemotingCommand request,
         final long timeoutMillis
     ) throws RemotingException, InterruptedException, MQBrokerException {
+        /**
+         * 发送message 并等待结果
+         */
         RemotingCommand response = this.remotingClient.invokeSync(addr, request, timeoutMillis);
         assert response != null;
+        /**
+         * 处理结果并返回
+         */
         return this.processPullResponse(response, addr);
     }
 
@@ -800,6 +816,10 @@ public class MQClientAPIImpl {
         PullMessageResponseHeader responseHeader =
             (PullMessageResponseHeader) response.decodeCommandCustomHeader(PullMessageResponseHeader.class);
 
+        /**
+         * 根据响应结果解码成PullResultExt对象，此时只是从网络中读取消息列表到byte[] messageBinary属性
+         *
+         */
         return new PullResultExt(pullStatus, responseHeader.getNextBeginOffset(), responseHeader.getMinOffset(),
             responseHeader.getMaxOffset(), null, responseHeader.getSuggestWhichBrokerId(), response.getBody());
     }

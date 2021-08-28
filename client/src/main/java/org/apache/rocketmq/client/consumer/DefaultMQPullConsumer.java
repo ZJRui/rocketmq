@@ -50,6 +50,8 @@ public class DefaultMQPullConsumer extends ClientConfig implements MQPullConsume
     private String consumerGroup;
     /**
      * Long polling mode, the Consumer connection max suspend time, it is not recommended to modify
+     *
+     * 参考  org.apache.rocketmq.broker.processor.PullMessageProcessor#processRequest 注释中解释了 消息拉取长轮序机制分析
      */
     private long brokerSuspendMaxTimeMillis = 1000 * 20;
     /**
