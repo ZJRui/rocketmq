@@ -153,6 +153,11 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
      *
      *
      * PullConsumer并没有consumeMessageService属性
+     *
+     *  PullMessageService 负责对消息队列进行消息拉取，从远端服务器
+     * 拉取消息后将消息存入 ProcessQueue 消息队列处理队列中，然后调用 Consum 巳Message Ser-
+     * vice#submitConsumeRequest 方法进行消息消费，使用线程池来消费消息，确保了消息拉取
+     * 与消息消费的解祸
      */
     private ConsumeMessageService consumeMessageService;
     private long queueFlowControlTimes = 0;
@@ -441,6 +446,7 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
 
                                 /**
                                  * 将拉取到的消息 放置到ProcessQueue 中，然后将拉取到的消息提交到ConsumeMessageService中供消费者消费，
+                                 *
                                  */
                                 boolean dispatchToConsume = processQueue.putMessage(pullResult.getMsgFoundList());
                                 /**
@@ -451,6 +457,10 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
                                  *      * 在创建PushConsumer之后调用consumer start方法的时候 会分析Consumer设置的MessageListener是并发还是顺序listener 来决定创建 ConsumeMessageConcurrentlyService 还是ConsumeMessageOrderlyService
                                  *      * 因此也就是说一个）PushConsumer 对应一个consumeMessageService
                                  *      *
+                                 *  PullMessageService 负责对消息队列进行消息拉取，从远端服务器
+                                 * 拉取消息后将消息存入 Proc巳 ssQueue 消息队列处理队列中，然后调用 Consum 巳Message Ser-
+                                 * vice#submitConsumeRequest 方法进行消息消费，使用线程池来消费消息，确保了消息拉取
+                                 * 与消息消费的解祸
                                  *
                                  */
                                 DefaultMQPushConsumerImpl.this.consumeMessageService.submitConsumeRequest(
@@ -828,6 +838,13 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
                         new ConsumeMessageConcurrentlyService(this, (MessageListenerConcurrently) this.getMessageListenerInner());
                 }
 
+                /**
+                 *  PullMessageService 负责对消息队列进行消息拉取，从远端服务器
+                 * 拉取消息后将消息存入 Proc巳 ssQueue 消息队列处理队列中，然后调用 Consum 巳Message Ser-
+                 * vice#submitConsumeRequest 方法进行消息消费，使用线程池来消费消息，确保了消息拉取
+                 * 与消息消费的解祸
+                 *
+                 */
                 this.consumeMessageService.start();
 
                 /**
@@ -1302,6 +1319,9 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
     @Override
     public void doRebalance() {
         if (!this.pause) {
+            /**
+             * 每一个PushConsumer都持有一个单独的RebalanceImpl对象，遍历consumer订阅信息对每隔主题的队列进行重新负载。
+             */
             this.rebalanceImpl.doRebalance(this.isConsumeOrderly());
         }
     }
@@ -1461,6 +1481,13 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
     }
 
     public void resetRetryAndNamespace(final List<MessageExt> msgs, String consumerGroup) {
+        /**
+         * ：恢复重试消息主题名 。这是为什么呢？这是由消息重试机制决定的， RocketMQ
+         * 将消息存入 commitlog 文件时，如果发现消息的延时级别 delayTimeLevel 大于 0 ， 会首先
+         * 将重试主题存人在消息的属性中，然后设置主题名称为 SCHEDULE TOPIC ，以便时间到
+         * 后重新参与消息消费 。
+         *
+         */
         final String groupTopic = MixAll.getRetryTopic(consumerGroup);
         for (MessageExt msg : msgs) {
             String retryTopic = msg.getProperty(MessageConst.PROPERTY_RETRY_TOPIC);

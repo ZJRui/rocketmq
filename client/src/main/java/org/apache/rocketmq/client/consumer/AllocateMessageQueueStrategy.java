@@ -21,6 +21,12 @@ import org.apache.rocketmq.common.message.MessageQueue;
 
 /**
  * Strategy Algorithm for message allocating between consumers
+ *
+ *  消息负载算法如果没有特殊的要求，尽量使用 AllocateMes 吨eQueueAveragely 、 Al ­
+ * ·~－  locateMessageQueueAveragelyByCircle ，因为分配算法比较直观 。 消息队列分配遵循
+ * 一个消费者可以分配多个消息队列，但同一个消息队列只会分配给一个消费者，故
+ * 如果消费者个数大于消息队列数量，则有些消费者无法消费消息 。
+ *
  */
 public interface AllocateMessageQueueStrategy {
 

@@ -29,6 +29,9 @@ import org.apache.rocketmq.common.message.MessageQueue;
 
 /**
  * Consistent Hashing queue algorithm
+ *
+ * AllocateMessageQueueConsistentHash ： 一致性 hash 。 不推荐使用，因为消息队列负载信息不容易跟踪 。
+ *
  */
 public class AllocateMessageQueueConsistentHash implements AllocateMessageQueueStrategy {
     private final InternalLogger log = ClientLogger.getLog();

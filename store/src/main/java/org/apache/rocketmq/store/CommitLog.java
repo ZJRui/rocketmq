@@ -784,6 +784,13 @@ public class CommitLog {
 
     }
 
+    /**
+     * ，这里
+     * 想再重点突 出 一个机制，消息重试机制依托于定时任务实现，
+     *
+     * @param msg
+     * @return
+     */
     public PutMessageResult putMessage(final MessageExtBrokerInner msg) {
         // Set the storage time
         msg.setStoreTimestamp(System.currentTimeMillis());
@@ -802,6 +809,14 @@ public class CommitLog {
         if (tranType == MessageSysFlag.TRANSACTION_NOT_TYPE
             || tranType == MessageSysFlag.TRANSACTION_COMMIT_TYPE) {
             // Delay Delivery
+            /**
+             * 在存入 Commitlog 文 件之前，如果消息的延迟级别 delayTim 巳Level 大于 0 ， 替 换消息的主题与队列为定时任务主题“ SCHEDULE TOPIC  XXXX ”，队列 ID 为延迟级别减
+             * 1 。 再次将消息主题、队列存入消息的属性中，键分别为 ： PROPERTY REAL  TOPIC 、
+             * PROPERTY _REAL  QUEUE_ID 。
+             *
+             * ACK 消息存入 CommitLog 文件后 ，将依托 RocketMQ 定时消息机制在延迟时间到期
+             * 后再次将消息拉取，提交消费线程池，
+             */
             if (msg.getDelayTimeLevel() > 0) {
                 if (msg.getDelayTimeLevel() > this.defaultMessageStore.getScheduleMessageService().getMaxDelayLevel()) {
                     msg.setDelayTimeLevel(this.defaultMessageStore.getScheduleMessageService().getMaxDelayLevel());

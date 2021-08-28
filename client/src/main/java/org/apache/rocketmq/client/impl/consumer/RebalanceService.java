@@ -43,11 +43,15 @@ public class RebalanceService extends ServiceThread {
          * 也就启动了RebalanceService 这个线程
          *
          *
-
+         *
          *
          *
          */
         while (!this.isStopped()) {
+            /**
+             * 设置等待间隔， 默认是20s。RebalanceService 线程默认每隔20秒执行一次 doRebalance。 可以使用rocketmq.client.rebalance.waitInterval来改变默认值
+             *
+             */
             this.waitForRunning(waitInterval);
             /**
              * *  在run方法中会执行doRebalance，在rebalance中会遍历 MQClientInstance的所有consumer，
@@ -67,6 +71,7 @@ public class RebalanceService extends ServiceThread {
              *          *                      *                     ClientRemotingProcessor.resetOffset(ChannelHandlerContext, RemotingCommand)  (org.apache.rocketmq.client.impl)
              *          *                      *                         ClientRemotingProcessor.processRequest(ChannelHandlerContext, RemotingCommand)  (org.apache.rocketmq.client.impl)
              *          *                      *
+             *          mqClientFactory是MQClientInstance对象
              */
             this.mqClientFactory.doRebalance();
         }

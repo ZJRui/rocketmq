@@ -1115,6 +1115,24 @@ public class MQClientAPIImpl {
         return response.getCode() == ResponseCode.SUCCESS;
     }
 
+    /**
+     *
+     *消息交给MessageListener处理完成之后要对消费结果进行处理：ConsumeMessageConcurrentlyService#processConsumeResult
+     *
+     * 如果消息监听器返回的消费结果为 RECONSUME LATER ，则需要将这些消息发送
+     * 给 Broker 延迟消息 。 如果发送 ACK 消息失败，将延迟 Ss 后提交线程池进行消费。 ACK
+     * 消息发送的网络客户端人口： MQClientAPIImpl#consumerSendMessageBack ，
+     *
+     * @param addr
+     * @param msg
+     * @param consumerGroup
+     * @param delayLevel
+     * @param timeoutMillis
+     * @param maxConsumeRetryTimes
+     * @throws RemotingException
+     * @throws MQBrokerException
+     * @throws InterruptedException
+     */
     public void consumerSendMessageBack(
         final String addr,
         final MessageExt msg,
@@ -1126,11 +1144,31 @@ public class MQClientAPIImpl {
         ConsumerSendMsgBackRequestHeader requestHeader = new ConsumerSendMsgBackRequestHeader();
         RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.CONSUMER_SEND_MSG_BACK, requestHeader);
 
+        /**
+         * ：消费组名 。
+         */
         requestHeader.setGroup(consumerGroup);
+        /**
+         * ：消息主题。
+         */
         requestHeader.setOriginTopic(msg.getTopic());
+        /**
+         * 消息物理偏移量
+         */
         requestHeader.setOffset(msg.getCommitLogOffset());
+        /**
+         * ：延迟级别， RcketMQ 不支持精确的定时消息调度，而是提供几个延时
+         * 级别， Messages toreConfig# messageD巳 layLevel = ” ls Ss  10s 30s  lm 2m  3m 4m Sm  6m 7m 8m
+         * 9m  lOm 20m 30m lh 2h ”，如果 delayLevel= I 表示延迟缸，delayLevel=2 则表示延迟 1 Os 。
+         */
         requestHeader.setDelayLevel(delayLevel);
+        /**
+         * 消息 ID 。
+         */
         requestHeader.setOriginMsgId(msg.getMsgId());
+        /**
+         *  最大重新消费次数，默认为 16 次。
+         */
         requestHeader.setMaxReconsumeTimes(maxConsumeRetryTimes);
 
         RemotingCommand response = this.remotingClient.invokeSync(MixAll.brokerVIPChannel(this.clientConfig.isVipChannelEnabled(), addr),

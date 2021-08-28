@@ -38,6 +38,22 @@ import org.apache.rocketmq.remoting.exception.RemotingException;
 
 /**
  * Remote storage implementation
+ *
+ * 集群模式消息进度存储文件存放在消息服务端 B roker 。
+ *
+ *
+ * 消息消费进度的读取，持久化与广播模式实现细节差不多，集群模式消息进度如果从内
+ * 存中读取消费进度，则从 RemoteBrokerOffsetStore 的 ConcurrentMap<MessageQueue, Atomic-
+ * Long> offsetTable =new  ConcurrentHashMap<Messag巳Qu巳ue, AtomicLong＞（）中根据消息消费队
+ * 列获取其消息消费进度；如果从磁盘读取，则发送网络请求，请求命令为 QUERY_
+ * CONSUMER  OFFSET 。 持久化消息进度，则请求命令为 UPDATE CONSUMER  OFFSET,
+ * 更新 Cons u merOffsetManag 町的 ConcurrentMap<Str i ng/* topic@gro up 町， ConcurrentMap<
+ * Integer／ ＊消息队列 ID 灯， Long/ ＊消息消费进度＊／》 offsetTable, Broker 端默认 10s 持久化一次
+ * 消息进度，存储文件名：$ {RocketMQ_ HOME }/store/config/consumerOffset.json 。
+ *
+ *消息消费进度的存储，广播模式与消费组无关，集群模式下以主题与消费组为键保存
+ * 该主题所有队列的消费进度
+ *
  */
 public class RemoteBrokerOffsetStore implements OffsetStore {
     private final static InternalLogger log = ClientLogger.getLog();
@@ -113,6 +129,11 @@ public class RemoteBrokerOffsetStore implements OffsetStore {
 
     @Override
     public void persistAll(Set<MessageQueue> mqs) {
+        /**
+         * 消息消费进度的存储，广播模式与消费组无关，集群模式下以主题与消费组为键保存
+         * 该主题所有队列的消费进度
+         *
+         */
         if (null == mqs || mqs.isEmpty())
             return;
 

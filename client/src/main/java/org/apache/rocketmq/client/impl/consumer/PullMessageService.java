@@ -29,6 +29,9 @@ import org.apache.rocketmq.common.utils.ThreadUtils;
 
 public class PullMessageService extends ServiceThread {
     private final InternalLogger log = ClientLogger.getLog();
+    /**
+     *
+     */
     private final LinkedBlockingQueue<PullRequest> pullRequestQueue = new LinkedBlockingQueue<PullRequest>();
     private final MQClientInstance mQClientFactory;
     private final ScheduledExecutorService scheduledExecutorService = Executors
@@ -175,7 +178,11 @@ public class PullMessageService extends ServiceThread {
              *     public void dispatchPullRequest(List<PullRequest> pullRequestList) {
              *     }
              *
-             *
+             *=============================
+             *  PullMessageService 负责对消息队列进行消息拉取，从远端服务器
+             * 拉取消息后将消息存入 ProccessQueue 消息队列处理队列中，然后调用 Consum 巳Message Ser-
+             * vice#submitConsumeRequest 方法进行消息消费，使用线程池来消费消息，确保了消息拉取
+             * 与消息消费的解祸
              *
              */
             DefaultMQPushConsumerImpl impl = (DefaultMQPushConsumerImpl) consumer;
@@ -189,6 +196,20 @@ public class PullMessageService extends ServiceThread {
         }
     }
 
+    /**
+     * PullMessageService 在启动时由于pullRequestQueue中没有PullRequest对象，故PullMessageService线程将会阻塞。
+     * 问题1：PullRequest对象在什么时候创建并加入到PullRequestQueue中一以便唤醒PullMessageService线程？
+     * Rebalancesrvice 线程每隔 2 0s 对 消 费者订阅 的主题进行一次 队列重新分配 ， 每一次分配都会获取主题的所有队列、从 Broke r 服务器实时查询当前该主题该消费组内消费者列
+     * 表 ， 对新分配的消息队列会创建对应的 PullRequest 对象。 在一个 JVM 进程中，同一个消费组 同一个队列只会存在一个 PullRequest 对象。
+     *
+     *
+     * 问题2： 集群内多个消费者是如何负载主题下的多个消费队列，如果有新的消费者加入时，消息队列又会如何重新分布？
+     * 由于每次进行队列重新负载时会从 Broker 实时查询出当前消费组内所有消费者，并且
+     * 对消息队列、消费者列表进行排序，这样新加入的消费者就会在队列重新分布时分配到消
+     * 费队列从而消费消息 。
+     *
+     * RocketMQ消息队列重新分布是由RebalanceService线程来实现的，一个MQClientInstance持有一个RebalanceService实现，并且伴随着MQClientInstance的启动而启动
+     */
     @Override
     public void run() {
         log.info(this.getServiceName() + " service started");

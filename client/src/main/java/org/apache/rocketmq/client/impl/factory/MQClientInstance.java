@@ -124,6 +124,14 @@ public class MQClientInstance {
      * 创建MQClientInstance的时候会创建一个PullMessageService对象，在构造器中。
      */
     private final PullMessageService pullMessageService;
+    /**
+     * PullMessageService 在启动时由于pullRequestQueue中没有PullRequest对象，故PullMessageService线程将会阻塞。
+     * 问题1：PullRequest对象在什么时候创建并加入到PullRequestQueue中一以便唤醒PullMessageService线程？
+     *
+     * 问题2： 集群内多个消费者是如何负载主题下的多个消费队列，如果有新的消费者加入时，消息队列又会如何重新分布？
+     *
+     * RocketMQ消息队列重新分布是由RebalanceService线程来实现的，一个MQClientInstance持有一个RebalanceService实现，并且伴随着MQClientInstance的启动而启动
+     */
     private final RebalanceService rebalanceService;
     private final DefaultMQProducer defaultMQProducer;
     private final ConsumerStatsManager consumerStatsManager;
@@ -348,6 +356,16 @@ public class MQClientInstance {
                      *                     DefaultMQPushConsumerImpl.resetOffsetByTimeStamp(long)  (org.apache.rocketmq.client.impl.consumer)
                      *                     ClientRemotingProcessor.resetOffset(ChannelHandlerContext, RemotingCommand)  (org.apache.rocketmq.client.impl)
                      *                         ClientRemotingProcessor.processRequest(ChannelHandlerContext, RemotingCommand)  (org.apache.rocketmq.client.impl)
+                     *
+                     *
+                     *    /**
+                     *      * PullMessageService 在启动时由于pullRequestQueue中没有PullRequest对象，故PullMessageService线程将会阻塞。
+                     *      * 问题1：PullRequest对象在什么时候创建并加入到PullRequestQueue中一以便唤醒PullMessageService线程？
+                     *      *
+                     *      * 问题2： 集群内多个消费者是如何负载主题下的多个消费队列，如果有新的消费者加入时，消息队列又会如何重新分布？
+                     *      *
+                     *      * RocketMQ消息队列重新分布是由RebalanceService线程来实现的，一个MQClientInstance持有一个RebalanceService实现，并且伴随着MQClientInstance的启动而启动
+                     *
                      *
                      */
                     this.rebalanceService.start();
@@ -1261,6 +1279,10 @@ public class MQClientInstance {
             MQConsumerInner impl = entry.getValue();
             if (impl != null) {
                 try {
+                    /**
+                     * 遍历已注册的消费者，对消费者执行doRebalance方法
+                     *
+                     */
                     impl.doRebalance();
                 } catch (Throwable e) {
                     log.error("doRebalance exception", e);

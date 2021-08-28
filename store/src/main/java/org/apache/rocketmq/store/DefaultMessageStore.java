@@ -86,6 +86,14 @@ public class DefaultMessageStore implements MessageStore {
 
     private final HAService haService;
 
+    /**
+     * 消息重试正是借助定时任务实现的，在将消息存入 commitlog 文件之前需要判
+     * 断消息的重试次数 ，如 果大于 0 ，则 会将消息的 主题设置为 SCHEDULE TOPIC  XXXX 。
+     * RocketMQ 定时消息 实现类为 org.apache . rocketmq. store.schedule. ScheduleMessageService 。
+     * 该类的实例在 DefaultMessageStore 中创建 ，通过 在 DefaultMessageStore 中调用 load 方法
+     * 加载并调用 start 方法进行启动
+     *
+     */
     private final ScheduleMessageService scheduleMessageService;
 
     private final StoreStatsService storeStatsService;

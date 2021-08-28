@@ -34,18 +34,22 @@ public interface OffsetStore {
 
     /**
      * Update the offset,store it in memory
+     *
+     * 更新内存中的消息消费进度 。
      */
     void updateOffset(final MessageQueue mq, final long offset, final boolean increaseOnly);
 
     /**
      * Get offset from local storage
      *
+     * 读取消息消费进度 。
      * @return The fetched offset
      */
     long readOffset(final MessageQueue mq, final ReadOffsetType type);
 
     /**
      * Persist all offsets,may be in local storage or remote name server
+     * 持久化指定消息 队列进度到磁盘。
      */
     void persistAll(final Set<MessageQueue> mqs);
 
