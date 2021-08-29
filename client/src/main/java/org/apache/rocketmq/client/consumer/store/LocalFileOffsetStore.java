@@ -161,7 +161,7 @@ public class LocalFileOffsetStore implements OffsetStore {
      *
      * 又或者consumerA将位移更新为90，consumerB位移更新为100，这不就导致consumerA 读取位移的时候发现是100，从而漏掉部分消息
      *
-     *
+     *或者是这种实现：
      *
      * @param mq
      * @param type

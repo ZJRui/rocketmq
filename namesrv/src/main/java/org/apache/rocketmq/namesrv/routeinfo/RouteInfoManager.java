@@ -45,6 +45,11 @@ import org.apache.rocketmq.common.protocol.route.TopicRouteData;
 import org.apache.rocketmq.common.sysflag.TopicSysFlag;
 import org.apache.rocketmq.remoting.common.RemotingUtil;
 
+/**
+ * NameServer 主要作用是为消息生产者和 消息消费者提供关于主题 Topic 的路由信息，
+ * 那么 NameServer 需 要存储路由 的 基础信息，还要能够管理 Broker 节点，包括路由 注册 、
+ * 路由删除等功能 。
+ */
 public class RouteInfoManager {
     private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.NAMESRV_LOGGER_NAME);
     private final static long BROKER_CHANNEL_EXPIRED_TIME = 1000 * 60 * 2;

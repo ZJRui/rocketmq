@@ -39,6 +39,14 @@ public class MQClientManager {
 
     }
 
+    /**
+     * 创建 MQC li e ntln s tan ce 实例 。 整个 NM 实例中只存在一个 MQC !ientManager 实
+     * 例，维护一个 MQClientlnstanc e 缓存表 ConcurrentMap < String／ ＊巳lientld 灯， MQClientinstanc巳＞
+     * facto叩Table =new  ConcurrentHashMap<S tri 吨， MQ C !i e ntln s t ance＞（）， 也 就是 同 一个 cli entld 只
+     * 会创建一个 MQClientinstance。
+     *
+     * @return
+     */
     public static MQClientManager getInstance() {
         return instance;
     }

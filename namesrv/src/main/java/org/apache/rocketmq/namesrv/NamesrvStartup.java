@@ -143,6 +143,13 @@ public class NamesrvStartup {
             System.exit(-3);
         }
 
+        /**
+         * 注册 JVM 钩子函数并启动服务器， 以便监昕 Broker 、消息生产者的网络请求 。
+         *
+         * 这里主要是向读者展示一种常用的编程技巧，如果代码中使用了线程池，一种优雅停
+         * 机的方式就是注册一个 JVM 钩子函数， 在 JVM 进程关闭之前，先将线程池关闭 ，及时释
+         * 放资源 。
+         */
         Runtime.getRuntime().addShutdownHook(new ShutdownHookThread(log, new Callable<Void>() {
             @Override
             public Void call() throws Exception {

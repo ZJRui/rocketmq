@@ -75,6 +75,11 @@ public class NamesrvController {
 
     public boolean initialize() {
 
+        /**
+         * 加载 KV 配置，创建 NettyServer 网络处理对象，然后开启两个定 时任务，在 RocketMQ
+         * 中此类定时任务统称为心跳检测 。
+         * 定时任务1：NameServer每隔10秒扫描一次broker，移除处于不激活状态的Broker
+         */
         this.kvConfigManager.load();
 
         this.remotingServer = new NettyRemotingServer(this.nettyServerConfig, this.brokerHousekeepingService);
@@ -84,6 +89,9 @@ public class NamesrvController {
 
         this.registerProcessor();
 
+        /**
+         * 定时任务1：NameServer每隔10秒扫描一次broker，移除处于不激活状态的Broker
+         */
         this.scheduledExecutorService.scheduleAtFixedRate(new Runnable() {
 
             @Override
@@ -92,6 +100,9 @@ public class NamesrvController {
             }
         }, 5, 10, TimeUnit.SECONDS);
 
+        /**
+         * nameServer 每隔10分分钟打印一次KV配置
+         */
         this.scheduledExecutorService.scheduleAtFixedRate(new Runnable() {
 
             @Override

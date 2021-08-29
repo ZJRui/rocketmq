@@ -169,6 +169,16 @@ public class ClientConfig {
 
         sb.append("@");
         sb.append(this.getInstanceName());
+        /**
+         * clientld 为客户端 IP + instance + ( unitname 可选）， 如果在 同 一台物理服务器部署两个应
+         * 用程序，应用程序 岂不是 clientld 相同， 会造成混乱？
+         *
+         * 为了避免这个问题 ， 如果 instanc e 为默认值 DEFAULT 的话， RocketMQ 会自动将
+         * instance 设置为进程 ID ，这样避免了不同进程的相互影响，
+         *
+         * MQClientlnstance 封装了 RocketMQ 网络处理 API ，是消息生产者（ Producer ）、消息消费者
+         * ( Consumer ）与 NameServ町 、 Broker 打交道的网络通道。
+         */
         if (!UtilAll.isBlank(this.unitName)) {
             sb.append("@");
             sb.append(this.unitName);

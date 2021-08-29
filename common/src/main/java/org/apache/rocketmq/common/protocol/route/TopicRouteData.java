@@ -44,8 +44,18 @@ public class TopicRouteData extends RemotingSerializable {
      *      这个一般是怎么配置，目前没有深究，似乎一般就用默认的null
      */
     private String orderTopicConf;
+    /**
+     *  topic 队列元数据。
+     */
     private List<QueueData> queueDatas;
+    /**
+     *  topic 分布的 broker 元数据
+     */
     private List<BrokerData> brokerDatas;
+    /**
+     *  broker 上过滤服务器
+     * 地址列表
+     */
     private HashMap<String/* brokerAddr */, List<String>/* Filter Server */> filterServerTable;
 
     public TopicRouteData cloneTopicRouteData() {

@@ -464,6 +464,11 @@ public class MQClientAPIImpl {
                 SendMessageRequestHeaderV2 requestHeaderV2 = SendMessageRequestHeaderV2.createSendMessageRequestHeaderV2(requestHeader);
                 request = RemotingCommand.createRequestCommand(msg instanceof MessageBatch ? RequestCode.SEND_BATCH_MESSAGE : RequestCode.SEND_MESSAGE_V2, requestHeaderV2);
             } else {
+                /**
+                 * MQ 客 户端发送消 息 的入口 是 MQClientAPIImpl#sendMessage 。 请 求命令是 Request­
+                 * Code.SEND_MESSAGE， 我们可以找到该命令的处理类： org . apache.rocketmq. broker. processor.
+                 * SendMessageProcessor 。 人口方法在 SendMessageProcessor# sendMessage 。
+                 */
                 request = RemotingCommand.createRequestCommand(RequestCode.SEND_MESSAGE, requestHeader);
             }
         }
@@ -471,9 +476,24 @@ public class MQClientAPIImpl {
 
         switch (communicationMode) {
             case ONEWAY:
+                /**
+                 * 单 向发送是指消息生产者调用消息发送的 API 后 ，无须等待消息服务器返回本次消息
+                 * 发送结果，并且无须提供回调函数，表示消息发送压根就不关心本次消息发送是否成功，
+                 * 其实现原理与异步消息发送相同，只是消息发送客户端在收到响应结果后什么都不做而已，
+                 * 并且没有重试机制 。
+                 */
                 this.remotingClient.invokeOneway(addr, request, timeoutMillis);
                 return null;
             case ASYNC:
+                /**
+                 * 消息异步发送是指消息生产者调用发送的 API 后，无须阻塞等待消息服务器返回本次
+                 * 消息发送结果，只需要提供一个回调函数，供消息发送客户端在收到响应结果回调 。 异步方
+                 * 式相比同步方式，消息发送端的发送性能会显著提高，但为了保护消息服务器的负载压力，
+                 * RocketMQ 对消息发送的异步消息进行了井发控制，通过参数 clientAsyncSemaphoreValue
+                 * 来控制，默认为 65535 。 异步消息发送虽然也可以通过 DefaultMQProducer#retryTimes ­
+                 * WhenSendAsyncFailed 属性来控制消息重试次数，但是重试的调用人 口 是在 收到服务端响
+                 * 应包时进行的，如果出现网络异常、网络超时等将不会重试。
+                 */
                 final AtomicInteger times = new AtomicInteger();
                 long costTimeAsync = System.currentTimeMillis() - beginStartTime;
                 if (timeoutMillis < costTimeAsync) {
@@ -602,6 +622,10 @@ public class MQClientAPIImpl {
         if (needRetry && tmp <= timesTotal) {
             String retryBrokerName = brokerName;//by default, it will send to the same broker
             if (topicPublishInfo != null) { //select one message queue accordingly, in order to determine which broker to send
+                /**
+                 *
+                 * 异步重试机制在收到消息发送结构后执行回调之前进行重试
+                 */
                 MessageQueue mqChosen = producer.selectOneMessageQueue(topicPublishInfo, brokerName);
                 retryBrokerName = mqChosen.getBrokerName();
             }

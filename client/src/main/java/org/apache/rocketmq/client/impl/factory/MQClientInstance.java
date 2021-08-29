@@ -831,12 +831,21 @@ public class MQClientInstance {
                          * 注意这里 getDefaultTopic的时候 我们传入的topic key是defaultMQProducer.getCreateTopicKey()，这个返回值是 org.apache.rocketmq.common.topic.TopicValidator#AUTO_CREATE_TOPIC_KEY_TOPIC
                          *
                          *  注意这里  不是向nameServer查询 方法参数中的topic，而是查询了defaultMQProducer的 createTopicKey
+                         *
+                         *   第一次发送消息时，本地没有缓存 topic 的路由信息，查询 NameServer 尝试获取，如果路由信息未找到，再次尝试用默认主题 DefaultMQProducerlmpl#createTopicKey 去查询，
+                         *              * 如果 BrokerConfig#autoCreateTopicEnable 为 true 时， NameServer 将返回路由信息，如果
+                         *              * autoCreateTopicEnab l e 为 false 将抛出无法找到 topic 路由异常。
+                         *
                          */
                         topicRouteData = this.mQClientAPIImpl.getDefaultTopicRouteInfoFromNameServer(defaultMQProducer.getCreateTopicKey(),
                             1000 * 3);
                         if (topicRouteData != null) {
                             for (QueueData data : topicRouteData.getQueueDatas()) {
                                 int queueNums = Math.min(defaultMQProducer.getDefaultTopicQueueNums(), data.getReadQueueNums());
+                                /**
+                                 * 如果 isD 巳fault 为 true ，则使用 默认主题去查询，如果查询到路由信息，则 替
+                                 * 换路由信息中读写队列个数为消息生产者默认的队列个数（defaultTopicQueueNums ）
+                                 */
                                 data.setReadQueueNums(queueNums);
                                 data.setWriteQueueNums(queueNums);
                             }
@@ -895,7 +904,7 @@ public class MQClientInstance {
                                 this.brokerAddrTable.put(bd.getBrokerName(), bd.getBrokerAddrs());
                             }
 
-                            // Update Pub info
+                            // Update Pub info ：更新 MQClientlnstance Broker 地址缓存表。
                             {
                                 /**
                                  * 将TopicRouteData转为TopicPublishInfo。
@@ -912,6 +921,8 @@ public class MQClientInstance {
                                  *  信息通过Consumer的updateTopicSubscribeInfo方法更新到每一个Consumer的topicSubscribeInfoTable 属性中。 这样就完成了将topic信息告知Producer和Consumer。
                                  *
                                  *
+                                 * ：根据 topicRouteData 中的 List<QueueData> 转换成问icPublis凶曲的 List<MessageQueue>列表。 然后会更新该 MQC!ientfustan臼所管辖的所
+                                 * 有消息发送关于 topic 的路由信息。
                                  */
                                 TopicPublishInfo publishInfo = topicRouteData2TopicPublishInfo(topic, topicRouteData);
                                 publishInfo.setHaveTopicRouterInfo(true);

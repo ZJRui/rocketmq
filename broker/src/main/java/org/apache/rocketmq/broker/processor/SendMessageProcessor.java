@@ -368,6 +368,10 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
                 maxReconsumeTimes = requestHeader.getMaxReconsumeTimes();
             }
             int reconsumeTimes = requestHeader.getReconsumeTimes() == null ? 0 : requestHeader.getReconsumeTimes();
+            /**
+             * ：如果消息重试次数超过允许的最大重试次数，消息将进入到 DLD 延迟队列 。 延
+             * 迟队列主题： %DLQ%＋消费组名，延迟队列在消息消费时将重点讲解 。
+             */
             if (reconsumeTimes >= maxReconsumeTimes) {
                 newTopic = MixAll.getDLQTopic(groupName);
                 int queueIdInt = Math.abs(this.random.nextInt() % 99999999) % DLQ_NUMS_PER_GROUP;
@@ -415,6 +419,9 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
         }
 
         response.setCode(-1);
+        /**
+         * Stepl ：检查消息发送是否合理，这里完成了以下几件事情 。
+         */
         super.msgCheck(ctx, requestHeader, response);
         if (response.getCode() != -1) {
             return response;
@@ -433,6 +440,10 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
         msgInner.setTopic(requestHeader.getTopic());
         msgInner.setQueueId(queueIdInt);
 
+        /**
+         * ：如果消息重试次数超过允许的最大重试次数，消息将进入到 DLD 延迟队列 。 延
+         * 迟队列主题： %DLQ%＋消费组名，延迟队列在消息消费时将重点讲解 。
+         */
         if (!handleRetryAndDLQ(requestHeader, response, request, msgInner, topicConfig)) {
             return response;
         }
@@ -461,6 +472,10 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
             }
             putMessageResult = this.brokerController.getTransactionalMessageService().prepareMessage(msgInner);
         } else {
+            /**
+             * ：调用 DefaultMessageStore#putMessage 进行消息存储。 关于消息存储的实现细
+             * 节将在第 4 章重点剖析 。
+             */
             putMessageResult = this.brokerController.getMessageStore().putMessage(msgInner);
         }
 
