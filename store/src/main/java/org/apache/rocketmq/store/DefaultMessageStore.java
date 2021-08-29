@@ -498,6 +498,11 @@ public class DefaultMessageStore implements MessageStore {
 
     @Override
     public PutMessageResult putMessage(MessageExtBrokerInner msg) {
+        /**
+         * Stepl ：如果当前 Broker 停止工作或 Broker 为 SLAVE 角色或 当前 Rocket 不支持写入
+         * 则拒绝消息写入；如果消息主题长度超过 256 个字符 、消息属 性长度超过 65536 个字符将
+         * 拒绝该消息写人 。
+         */
         PutMessageStatus checkStoreStatus = this.checkStoreStatus();
         if (checkStoreStatus != PutMessageStatus.PUT_OK) {
             return new PutMessageResult(checkStoreStatus, null);
@@ -509,6 +514,7 @@ public class DefaultMessageStore implements MessageStore {
         }
 
         long beginTime = this.getSystemClock().now();
+
         PutMessageResult result = this.commitLog.putMessage(msg);
         long elapsedTime = this.getSystemClock().now() - beginTime;
         if (elapsedTime > 500) {
