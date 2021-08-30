@@ -106,7 +106,11 @@ public class TopicPublishInfo {
          * 在 Broker 若机期间，如果一次消息发送失败后，可以将该 Broker 暂时排除在消息队列的选
          * 择范围中 。这就是Producer端的Broker故障延迟机制
          *
-         *
+         *---------------
+         * 这个方法有一个缺点： 第一次调用该方法的时候lastBrokerName为null，然后随机选择一个MessageQueu，如果发送失败，第二次调用该方法的
+         * 时候就会传入第一次被选中MessageQueue的brokerName，这样第二次selectOneMessageQueue就能规避第一次的brokerName
+         * 但是第二次发送失败的时候 lastBrokerName就是第二次的brokerName，这个时候第三次选择的时候能够规避第二次的brokerName，但是无法规避第一次的brokerName
+         * 这就有可能导致第三次尝试发送的时候会选择第一次的brokerName的MessageQueue 因此引入了broker故障延迟机制从而规避发送失败的 broker
          */
         if (lastBrokerName == null) {
             return selectOneMessageQueue();
