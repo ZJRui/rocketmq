@@ -32,6 +32,14 @@ public class QueueData implements Comparable<QueueData> {
      * 如果这个BrokerName不存在QueueData则创建一个，如果已经存在QueueData则更新，也就是说一个Topic的一个BrokerName对应一个QueueData
      *
      * 在一个BrokerName中可以有多个broker节点构成主从结构
+     * =================
+     * 在这里重点关注的是QueueData， 从上面图片中我们看到  这个Topic有几个BrokerName对应就会有几个QueueData。
+     *
+     * 因为在每一个BrokerName的master-slave结构中，只有master节点能够写入数据，因此master节点上为该Topic创建的写队列的个数就是QueueData中的writeQueueNums。
+     *
+     * slave节点 和master节点都支持对外提供读，因此都有读队列。
+     *
+     *
      */
     private String brokerName;
     /**
@@ -71,6 +79,20 @@ public class QueueData implements Comparable<QueueData> {
         return writeQueueNums;
     }
 
+    /**
+     * Broker 启动的时候会向所有的nameServer 注册。
+     *
+     * NameServer收到Broker的注册请求的时候 会通过 DefaultRequestProcessor.registerBroker方法处理
+     * 请求中会带有 broker所属集群，brokerName，brokerId 等信息，
+     *
+     * 我们要确认当前的路由信息中：Broker所属集群是否存在， broker地址是否存在， brokerName是否存在 brokerId是否存在
+     *
+     * 最终会调用  RouteInfoManager.registerBroke 将路由信息的注册交给RoutInfoManager。
+     *
+     *
+     *
+     * @param writeQueueNums
+     */
     public void setWriteQueueNums(int writeQueueNums) {
         this.writeQueueNums = writeQueueNums;
     }

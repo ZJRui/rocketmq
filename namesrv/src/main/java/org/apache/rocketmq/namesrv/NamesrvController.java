@@ -73,6 +73,20 @@ public class NamesrvController {
         this.configuration.setStorePathFromConfig(this.namesrvConfig, "configStorePath");
     }
 
+    /**
+     *
+     * NamesrvStartup.start(NamesrvController)  (org.apache.rocketmq.namesrv)
+     *     NamesrvStartup.main0(String[])  (org.apache.rocketmq.namesrv)
+     *         NamesrvStartup.main(String[])  (org.apache.rocketmq.namesrv)
+     *
+     *  * 这里调用了 initialize方法触发NamesrvController的启动：
+     *          * 1，加载kv配置
+     *          * 2，启动NettyServer
+     *          * 3，开启两个定时任务， 每隔10s扫描一次Broker，移除处于不激活状态的Broker
+     *          * 每隔10s打印一次kv配置
+     *
+     * @return
+     */
     public boolean initialize() {
 
         /**

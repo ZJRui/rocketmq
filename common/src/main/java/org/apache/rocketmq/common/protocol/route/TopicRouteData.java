@@ -46,6 +46,9 @@ public class TopicRouteData extends RemotingSerializable {
     private String orderTopicConf;
     /**
      *  topic 队列元数据。
+     *
+     *  一个BrokerName对应一个QueueData对象
+     *
      */
     private List<QueueData> queueDatas;
     /**

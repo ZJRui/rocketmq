@@ -49,6 +49,7 @@ import org.apache.rocketmq.remoting.common.RemotingUtil;
  * NameServer 主要作用是为消息生产者和 消息消费者提供关于主题 Topic 的路由信息，
  * 那么 NameServer 需 要存储路由 的 基础信息，还要能够管理 Broker 节点，包括路由 注册 、
  * 路由删除等功能 。
+ *
  */
 public class RouteInfoManager {
     private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.NAMESRV_LOGGER_NAME);
@@ -59,7 +60,8 @@ public class RouteInfoManager {
      */
     private final ReadWriteLock lock = new ReentrantReadWriteLock();
     /**
-     * Topic消息队列路由信息，消息发送时根据路由表进行负载均衡。
+     * Topic消息队列路由信息，消息发送时根据路由表进行负载均衡。    注意他的value是一个List，消息发送时会根据该属性路由表进行负载均衡
+     *
      *
      *  具体topicQueueTable和brokerAddrTable的运行时数据结构可以参考右侧 图片
      */
@@ -217,10 +219,25 @@ public class RouteInfoManager {
                 String oldAddr = brokerData.getBrokerAddrs().put(brokerId, brokerAddr);
                 registerFirst = registerFirst || (null == oldAddr);
 
+                /**
+                 * 下面的if条件中判断了masterId是否等于BrokerId
+                 *
+                 * 只有当请求 中broker的id为0的时候我们才 执行 下面的createAndUpdateQueueData，也就是创建QueueData
+                 * 因此我们说一个BrokerName就有一个QueueData
+                 *
+                 */
                 if (null != topicConfigWrapper
                     && MixAll.MASTER_ID == brokerId) {
                     /**
                      * 如果brokerid为0，表示master节点，并且Broker Topic配置信息发生变化或者是初次注册
+                     *
+                     *
+                     *这个topicConfigWrapper是啥？他是从请求体中解析而来的，请求中会带有一个叫做dataVersion的数据，
+                     * 判断请求中的dataVersion和当前nameServer的brokerLiveTable 中保存的dataVersion是否一致。
+                     *
+                     * topicConfigWrapper的由来：
+                     *   registerBrokerBody = RegisterBrokerBody.decode(request.getBody(), requestHeader.isCompressed());
+                     *    topicConfigWrapper=registerBrokerBody.getTopicConfigSerializeWrapper(),
                      */
                     if (this.isBrokerTopicConfigChanged(brokerAddr, topicConfigWrapper.getDataVersion())
                         || registerFirst) {
@@ -230,16 +247,29 @@ public class RouteInfoManager {
                          * 将返回Default_topic的路由信息。
                          *
                          * 将所有的topic在这个Broker上创建。
+                         *
+                         * 注意下面为什么是一个map结构？ 因为Broker节点注册的时候会携带自身的Topic信息， 一个Broker节点可能配置了多个topic信息。
+                         * 然后我们根据Broker带过来的topic信息创建topic对应的Queue。  尽管这个Broker有多个Topic，但是他的BrokerName 是唯一的 。
+                         *
+                         * 也就是说假设当前 Broker节点的name是 broker_A，他有三个topic，则他需要为每一个topic 创建一个关于该topic下 broker_A的QueueData
+                         *
                          */
                         ConcurrentMap<String, TopicConfig> tcTable =
                             topicConfigWrapper.getTopicConfigTable();
                         if (tcTable != null) {
                             for (Map.Entry<String, TopicConfig> entry : tcTable.entrySet()) {
+                                /**
+                                 *   * 只有当请求 中broker的id为0的时候我们才 执行 下面的createAndUpdateQueueData，也就是创建QueueData
+                                 *     因此我们说一个BrokerName就有一个QueueData
+                                 *
+                                 *     根据该topic的TopicConfig 创建QueueData； topic下可以有多个BrokerName，然后为每一个BrokerName创建一个QueueData
+                                 */
                                 this.createAndUpdateQueueData(brokerName, entry.getValue());
                             }
                         }
                     }
-                }
+                }//
+
 
                 BrokerLiveInfo prevBrokerLiveInfo = this.brokerLiveTable.put(brokerAddr,
                     new BrokerLiveInfo(
