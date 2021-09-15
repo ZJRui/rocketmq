@@ -427,6 +427,16 @@ public class TopicConfigManager extends ConfigManager {
         }
     }
 
+    /**
+     * topicConfigWrapper , 主题配置， t opicConfigWrapper 内部 封装的是 Top icConfig­
+     * Manager 中的 topicConfigTable ，内部存储的是 Broker 启动时默认的 一些 Topic,
+     * MixAll. SELF  TEST_ TOPIC 、 MixAll.DEFAULT一TOPIC ( AutoCreateTopic-
+     * Enable=true ).,  MixAll.BENCHMARK  TOPIC 、 MixAll.OFFSET MOVED
+     * EVENT 、 BrokerConfig#brokerClusterName 、 BrokerConfig#brokerName 。 Broker
+     * 中 Topic 默认存储在$｛Rock巳t一Hom巳｝ ／ store / confg/topic. on 中 。
+     *
+     * @return
+     */
     public TopicConfigSerializeWrapper buildTopicConfigSerializeWrapper() {
         /**
          * TopicConfigWrapper 内部封装的是topicConfigManager中的topicConfigTable,内存存储的是Broker启动时默认的一些Topic,MixAll.self_test_topic

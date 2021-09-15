@@ -888,6 +888,8 @@ public class BrokerController {
         }
 
         /**
+         * ## 路由注册
+         *
          * Broker端心跳包发送，每隔30向集群中所有的NameServer发送心跳包。NameServer收到Broker心跳包会更新brokerLiveTable缓存中BrokerLiveInfo的lastUpdateTimestamp
          * NameServer每隔10s扫描BrokerLiveTable，如果连续120s没有收到心跳包，nameServer将移除该Broker的路由信息同时关闭Socket连接
          */
