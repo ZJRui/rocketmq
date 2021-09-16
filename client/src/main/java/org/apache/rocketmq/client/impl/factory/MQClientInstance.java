@@ -181,6 +181,13 @@ public class MQClientInstance {
             MQVersion.getVersionDesc(MQVersion.CURRENT_VERSION), RemotingCommand.getSerializeTypeConfigInThisServer());
     }
 
+    /**
+     *
+     *
+     * @param topic
+     * @param route
+     * @return
+     */
     public static TopicPublishInfo topicRouteData2TopicPublishInfo(final String topic, final TopicRouteData route) {
         /**
          * 将Topic信息封装成一个路由信息TopicPublishInfo，交给每一个Producer
@@ -213,9 +220,20 @@ public class MQClientInstance {
              */
             List<QueueData> qds = route.getQueueDatas();
             /**
-             * 根据brokerName进行排序
+             * 根据brokerName进行排序.
+             *
              */
             Collections.sort(qds);
+            /**
+             *
+             * 我们知道在NameServer的路由信息中一个Topic 有几个brokerName，就会有几个QueueData，每一个QueueData会存储这个BrokerName中的所有brokerId，
+             *
+             * 生产者通过向nameServer查询topic的 路由信息，对返回的结果进行处理，在返回的结果中 会重点分析每一个QueueData; QueueData
+             * 中的writeQueueNums表示写队列的个数，实际上就是对应着该BrokerName中的master Broker节点上的该topic的写队列的个数。
+             * 此时对于生产者来说他关系的是每一个QueueData中的writeQueueNums， 也就是关心每一个BrokerName下的 master Broker节点上
+             * 的该topic的写队列的个数，然后为每一个写队列创建一个MessageQueue对象，最终Producer发送消息的时候会选择一个MessageQueue，将消息发送到该MessageQueue中。
+             *
+             */
             for (QueueData qd : qds) {
                 /**
                  * 如果该BrokerName存在写权限
@@ -412,6 +430,12 @@ public class MQClientInstance {
 
         /**
          * 第二个定时任务
+         *
+         * 非常重要的任务：
+         *  RocketMQ的路由发现是非实时的，当Topic路由出现变化后，nameServer不主动推送给客户端，
+         *  而是由客户端定时拉取最新的路由。（注意是定时拉取最新的路由，也就是consumer和Producer存在定时任务）
+         *
+         *
          * MQClient 端启动定时任务 更新topic的路由信息。 具体更新哪些路由 会从consumerTable ，producerTable中遍历每一个consumer
          * producer，取出其中的topic，然后更新每一个topic的路由信息
          *
@@ -822,6 +846,12 @@ public class MQClientInstance {
                     TopicRouteData topicRouteData;
                     /**
                      * isDefault参数表示是否是默认的 producer，如果isDefault为true，且defaultMQProducer不为空
+                     *
+                     * ：如果 isDefault 为 true ，则使用 默认主题去查询，如果查询到路由信息，则 替
+                     * 换路由信息中读写队列个数为消息生产者默认的队列个数（defaultTopicQueueNums ）；如果
+                     * isDefault 为 false ，则使用参数 topic 去查询；如果未查询到路由信息，则返回 false ，表示
+                     * 路由信息未变化。
+                     *
                      */
                     if (isDefault && defaultMQProducer != null) {
                         /**

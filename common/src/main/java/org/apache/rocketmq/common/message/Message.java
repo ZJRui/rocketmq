@@ -26,6 +26,9 @@ public class Message implements Serializable {
     private static final long serialVersionUID = 8445773977080406428L;
 
     private String topic;
+    /**
+     * 消息 TAG ，用于消息过滤
+     */
     private int flag;
     /**
      * Message 扩展属性主要包含下面几个。
@@ -130,10 +133,15 @@ public class Message implements Serializable {
         this.putProperty(MessageConst.PROPERTY_TAGS, tags);
     }
 
+
     public String getKeys() {
         return this.getProperty(MessageConst.PROPERTY_KEYS);
     }
 
+    /**
+     *   Message 索引键， 多个用空格隔开， RocketMQ 可以根据这些 key 快速检索到消息
+     * @param keys
+     */
     public void setKeys(Collection<String> keys) {
         StringBuffer sb = new StringBuffer();
         for (String k : keys) {
@@ -153,6 +161,10 @@ public class Message implements Serializable {
         return 0;
     }
 
+    /**
+     *  消息延迟级别，用于定时消息或消息重试。
+     * @param level
+     */
     public void setDelayTimeLevel(int level) {
         this.putProperty(MessageConst.PROPERTY_DELAY_TIME_LEVEL, String.valueOf(level));
     }
@@ -165,6 +177,10 @@ public class Message implements Serializable {
         return Boolean.parseBoolean(result);
     }
 
+    /**
+     * ：消息发送时是否等消息存储完成后再返回
+     * @param waitStoreMsgOK
+     */
     public void setWaitStoreMsgOK(boolean waitStoreMsgOK) {
         this.putProperty(MessageConst.PROPERTY_WAIT_STORE_MSG_OK, Boolean.toString(waitStoreMsgOK));
     }

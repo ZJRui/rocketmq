@@ -25,6 +25,14 @@ import java.util.HashMap;
 import java.util.List;
 import org.apache.rocketmq.remoting.protocol.RemotingSerializable;
 
+/**
+ *
+ *   *  RocketMQ的路由发现是非实时的，当Topic路由出现变化后，nameServer不主动推送给客户端，而是由客户端定时拉取最新的路由。（注意是定时拉取最新的路由，也就是consumer和Producer存在定时任务）
+ *      *MQClientInstance 中会创建定时任务
+ *
+ *      TopicRouteData 就是从NameServer中获取的路由结果， 具体的返回结果是在  NameServer 路由发现实类 ： DefaultRequestProcessor#getRoutelnfoByTopic  方法中创建了TopicRouteData
+ *
+ */
 public class TopicRouteData extends RemotingSerializable {
     /**
      * TopicRouteData中存储了topic的所有信息，该信息是从nameServer中获取到的。
@@ -42,6 +50,16 @@ public class TopicRouteData extends RemotingSerializable {
      *      * 参照DefaultRequestProcessor#getRouteInfoByTopic
      *      *
      *      这个一般是怎么配置，目前没有深究，似乎一般就用默认的null
+     *
+     *      ---------
+     *       if (this.namesrvController.getNamesrvConfig().isOrderMessageEnable()) {
+     *                 String orderTopicConf =
+     *                     this.namesrvController.getKvConfigManager().getKVConfig(NamesrvUtil.NAMESPACE_ORDER_TOPIC_CONFIG,
+     *                         requestHeader.getTopic());
+     *                 topicRouteData.setOrderTopicConf(orderTopicConf);
+     *             }
+     *
+     *
      */
     private String orderTopicConf;
     /**

@@ -137,6 +137,29 @@ public class RouteInfoManager {
         return topicList.encode();
     }
 
+    /**
+     *
+     *          nameServer启动的时候会创建 定时任务 NameServer每隔10秒扫描一次broker，移除处于不激活状态的Broker.
+     *          *
+     *          * 注意这里只是移除不激活状态的Broker， 也就是说，不是NameServer发送请求你询问broker是否在线。
+     *          * 而是Broker节点主动发送请求来保持心跳， Broker发送的请求被处理的逻辑是在outeInfoManager#registerBroker(java.lang.String, java.lang.String, java.lang.String, long, java.lang.String, org.apache.rocketmq.common.protocol.body.TopicConfigSerializeWrapper, java.util.List, io.netty.channel.Channel)
+     *          * 方法中，在这个registerBroker方法中 ，每收到一个心跳包，就会执行一次brokerLiveTabel的更新，更新 brok erL iveTa ble 中关于 Broker 的状态信息以及路
+     *          * 由表（ topicQueueTable 、 brokerAddrTab le 、 brokerLi veTa bl e 、 fi lterServerTable ）
+     *          * 更新上述路由表（HashTable ）使用了锁粒度较少的读写锁，允许多个消息发送者（P roducer ）并发读，
+     *          * 保证消息发送时的高并发。 但同一时刻 NameServer 只处理一个 Broker 心跳包，多个心跳
+     *          * 包请求串行执行。 这也是读写锁经典使用场
+     *
+     *
+     * @param clusterName
+     * @param brokerAddr
+     * @param brokerName
+     * @param brokerId
+     * @param haServerAddr
+     * @param topicConfigWrapper
+     * @param filterServerList
+     * @param channel
+     * @return
+     */
     public RegisterBrokerResult registerBroker(
         final String clusterName,
         final String brokerAddr,
@@ -229,7 +252,9 @@ public class RouteInfoManager {
                 if (null != topicConfigWrapper
                     && MixAll.MASTER_ID == brokerId) {
                     /**
-                     * 如果brokerid为0，表示master节点，并且Broker Topic配置信息发生变化或者是初次注册
+                     * 如果brokerid为0，表示master节点，并且Broker Topic配置信息发生变化或者是初次注册,
+                     *
+                     *
                      *
                      *
                      *这个topicConfigWrapper是啥？他是从请求体中解析而来的，请求中会带有一个叫做dataVersion的数据，
@@ -243,10 +268,12 @@ public class RouteInfoManager {
                         || registerFirst) {
                         /**
                          * 如果brokerid为0，表示master节点，并且Broker Topic配置信息发生变化或者是初次注册 ，则需要创建或者更新topic路由元数据，填充topicQueueTable。
-                         * 其实就是为默认主题自动注册路由信息，其中包含mixAll.default_topic的路由信息。当消息生产者发送主题时，如果该主题未创建并且brokerconfig的autoCreateTopicEnable为true，
-                         * 将返回Default_topic的路由信息。
+                         * 其实就是为默认主题自动注册路由信息，
+                         * 在这个注册的路由中有一个特殊的Topic：mixAll.default_topic ，其中包含mixAll.default_topic的路由信息。
+                         * 当消息生产者发送主题时，如果该主题未创建并且brokerconfig的autoCreateTopicEnable为true，将返回Default_topic的路由信息。
                          *
-                         * 将所有的topic在这个Broker上创建。
+                         *=============
+                         *
                          *
                          * 注意下面为什么是一个map结构？ 因为Broker节点注册的时候会携带自身的Topic信息， 一个Broker节点可能配置了多个topic信息。
                          * 然后我们根据Broker带过来的topic信息创建topic对应的Queue。  尽管这个Broker有多个Topic，但是他的BrokerName 是唯一的 。
@@ -292,6 +319,10 @@ public class RouteInfoManager {
                     }
                 }
 
+                /**
+                 * ；如果此 Broker 为从节点，则需要查找
+                 * 该 Broker 的 Master 的节点信息，并更新对应 的 masterAddr 属性。
+                 */
                 if (MixAll.MASTER_ID != brokerId) {
                     String masterAddr = brokerData.getBrokerAddrs().get(MixAll.MASTER_ID);
                     if (masterAddr != null) {
@@ -574,6 +605,18 @@ public class RouteInfoManager {
         return null;
     }
 
+    /**
+     *
+     * Broker消息服务器在启动时向所有的NameServer注册,Broker启动时会创建定时任务每隔30秒向NameServer发送心跳包，
+     * 心跳包中包含BrokerId，broker地址，Broker名称，所属集群等信息；NameServer与每台Broker服务器保持长连接，
+     * NameServer启动时会创建定时任务，每隔10s定期检查内存中的Broker活跃表，如果检测到长时间（120s）未收到Broker的心跳，
+     * 则认定为Broker宕机，则从路由表中将其移除。但是路由变化不会马上通知消息生产者。为什么要这样设计？主要是为了降低NameServer实现的负载型，
+     * 在消息发送端提供容错机制来保证消息发送的高可用性
+     *
+     * ，路由删除的方法，就是从 topic­
+     * Queue Table 、 brokerAddrTable 、 brokerLiveTable 、 filterServerTable 删除与 该 Broker 相 关的
+     * 信息，
+     */
     public void scanNotActiveBroker() {
         Iterator<Entry<String, BrokerLiveInfo>> it = this.brokerLiveTable.entrySet().iterator();
         while (it.hasNext()) {
@@ -632,6 +675,8 @@ public class RouteInfoManager {
                      *
                      * lockInterruptibly的正确使用方式参考：https://github.com/alibaba/p3c/issues/287
                      *
+                     *
+                     * 申 请写锁，根据 brokerAddress 从 brokerLiveTab le 、 filters 巳rverTable 移除，
                      */
                     this.lock.readLock().lockInterruptibly();
                     Iterator<Entry<String, BrokerLiveInfo>> itBrokerLiveTable =
@@ -666,6 +711,9 @@ public class RouteInfoManager {
 
             try {
                 try {
+                    /**
+                     * 申 请写锁，根据 brokerAddress 从 brokerLiveTab le 、 filters 巳rverTable 移除，
+                     */
                     this.lock.writeLock().lockInterruptibly();
                     this.brokerLiveTable.remove(brokerAddrFound);
                     this.filterServerTable.remove(brokerAddrFound);

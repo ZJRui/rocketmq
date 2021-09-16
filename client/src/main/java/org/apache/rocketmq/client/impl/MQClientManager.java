@@ -28,10 +28,18 @@ import org.apache.rocketmq.remoting.RPCHook;
 public class MQClientManager {
     private final static InternalLogger log = ClientLogger.getLog();
     /**
-     * 一个JVM内只有一个ClientManager
+     * 一个JVM内只有一个ClientManager，MQClientlnstance 封装了 RocketMQ 网络处理 API ，是消息生产者（ Producer ）、消息消费者
+     * ( Consumer ）与 NameServer 、 Broker 打交道的网络通道。
+     *
      */
     private static MQClientManager instance = new MQClientManager();
     private AtomicInteger factoryIndexGenerator = new AtomicInteger();
+    /**
+     * 整个JVM示例中只存在一个MQClientManager示例，维护一个MQClientInstance缓存表，key 是ClientId，Value是MQClientInstance，也就是同一个ClientID只会创建一个
+     * MQClientInstance。
+     *
+     * 一个MQClientInstance内 会有consumerTable，producerTable，topicRouteTable
+     */
     private ConcurrentMap<String/* clientId */, MQClientInstance> factoryTable =
         new ConcurrentHashMap<String, MQClientInstance>();
 

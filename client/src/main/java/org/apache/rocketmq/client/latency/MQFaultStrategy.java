@@ -130,7 +130,7 @@ public class MQFaultStrategy {
          *
          * 如果该属性为true，则MQFaultStrategy会执行Broker故障延迟机制。
          *
-         * 那么我们要问什么是故障延迟机制？ 这就要分析TopicPublisInfo的selectOneMessageQueue方法存在什么缺陷，这个方法在一次消息发送过程中能成功规避故障的 B roker，但如果 Bro ker 若机，由于路
+         * 那么我们要问什么是故障延迟机制？ 这就要分析TopicPublisInfo的selectOneMessageQueue方法存在什么缺陷，这个方法在一次消息发送过程中能成功规避故障的 Broker，但如果 Broker 若机，由于路
          * 由算法中的消息队列 是按 Broker 排序 的，如果上一次根据路由算法选择的是若机的 Broker
          * 的第一个队列 ，那么随后的下 次选择的是若机 Broker 的第二个队列，消息发送很有可能会
          * 失败，再次引发重试，带来不必要的性能损耗，那么有什么方法在一次消息发送失败后，
@@ -157,7 +157,33 @@ public class MQFaultStrategy {
      *                          * 第三个参数 ： isolation ，是否隔离，该参数的含义如果为 true ，则使用默认时长 30s 来
      *                          * 计算 Broker 故 障规避 时长 ，如果为 false ， 则使用本次消息发送延迟时间来计算 Broker 故障规避时长
      *                          *
+     *
+     *     --------------------
+     *             * broker故障延迟机制：
+     *                          * 在不启用故障延迟的情况下会有什么问题呢？ 发送消息的时候我们需要选择一个MessageQueue，如果因为Broker宕机导致第一次发送失败了，
+     *                          * 那么第二次选择MessageQueue的时候要规避同一个Broker的MessageQueue。 在RocketMQ的 selectOneMessageQueue(lastBrokerName);
+     *                          * 方法中进行选择MessageQueue，其中参数lastBrokerName表示上一次发送失败的BrokerName，因此第一次发送的时候为null,
+     *                          * 第二次发送的时候为第一次发送失败的MessageQueue所在的BrokerName， 如果第二次发送失败了，那么我们第三次选择的时候
+     *                          * lastBrokerName就是第二法发送失败的BrokerName，那么这个时候第三次选择MessageQueue的过程中无法规避选中第一次发送失败的BrokerName的MessageQueue。
      *                          *
+     *                          * 消息发送很有可能会失败，再次引发重试，带来不必要的性能损耗，那么有什么方法在一次消息发送失败后，暂时将该 Broker 排除在消息队列选择范围外呢？
+     *
+     *                          * 或许有朋友会问， Broker 不可用后 ，路由信息中为什么还会包含该 Brok町的路由信息呢？其实这不难解释：首先，
+     *                          * NameServer 检测 Broker 是否可用是有延迟的，最短为一次心跳检测间 隔（ 1 0s ）； 其次， NameServer 不会检测到 Broker
+     *                          * 岩机后马上推送消息给消息生产者，而是消息生产者每隔 30s 更新一次路由信息，所以消息生产者最快感知 Broker 最新的路由信息也需要 30s 。
+     *                          * 如果能引人一种机制，在 Broker 若机期间，如果一次消息发送失败后，可以将该 Broker 暂时排除在消息队列的选择范围中 。
+     *                          *
+     *                          * 消息发送失败的时候创建一条失败记录， 指定broker名称，本次消息发送延迟时间（本次消息失败时的时间减去发送前开始时间）
+     *                          * 第三个参数isolation 表示是否隔离，该参数的含义如果为true，则使用默认时长30s来计算broker故障规避时长；如果为false，则使用本次消息发送
+     *                          * 延迟时间来计算Broker故障规避时长。
+     *                          *
+     *                          * 故障延迟机制的原理就是：消息发送失败的是时候 创建一条发送失败记录，记录broker和故障延迟时间，指定该broker在未来的故
+     *                          * 障延迟时间内不能发送消息。这个故障延迟时间 可以使用固定的30秒，也可以根据消息发送开始时间到消息发送失败时的差值时间 来计
+     *                          * 算一个时间作为故障延迟时间，差值时间越大计算得到的故障延迟时间越大，故障延迟时间就是broker要规避 的时长。接下来多久的时间内该 Broker 将不
+     *                          * 参与消息发送队列负载。此时消息发送时会顺序选择MessageQueue，然后判断这个MessageQueue是否可用，判断的依据就是根据发送失败记录。
+     *                          *
+     *
+     *
      * @param brokerName
      * @param currentLatency
      * @param isolation
