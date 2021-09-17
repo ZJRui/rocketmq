@@ -93,10 +93,28 @@ public class DefaultRequestProcessor extends AsyncNettyRequestProcessor implemen
                 if (brokerVersion.ordinal() >= MQVersion.Version.V3_0_11.ordinal()) {
                     return this.registerBrokerWithFilterServer(ctx, request);
                 } else {
+                    /**
+                     * 注意这里将ctx  ChannelHandlerContext 向下传递，也就是socket连接
+                     * 因为这个类所在的模块时 nameserver， 实际上这个ctx 也就代表着 Broker的socket链接，
+                     * 这ctx最终会保存到BrokerLiveInfo，实际上是通过ctx得到了channel
+                     *
+                     * 也就是说NameServer与Broker保持长连接，Broker状态存储在看brokerLiveTable中，nameServer没收到一个心跳包 将更新BrokerLiveTable中关于Broker的状态信息及
+                     * 路由表（topicQueueTable,borkerAddrTable, brokerLiveTable, filterServerTable）更新上述路由表使用了粒度较少的读写锁，允许多个消息发送者Producer并发读，保证消息发送
+                     * 时的高并发。单同一时刻NameServer只处理一个Broker心跳包，多个心跳包请求串行执行。
+                     *
+                     *
+                     */
                     return this.registerBroker(ctx, request);
                 }
             case RequestCode.UNREGISTER_BROKER:
                 return this.unregisterBroker(ctx, request);
+            /**
+             * get  routeinfo by topic
+             * 这个请求是什么时候发过来的？ 生产者调用方法 fetchPublishMessageQueues
+             * 在这个fetch方法中会执行
+             * TopicRouteData topicRouteData = this.mQClientFactory.getMQClientAPIImpl().getTopicRouteInfoFromNameServer(topic, timeoutMillis);
+             * 然后nameServer就会收到这个请求
+             */
             case RequestCode.GET_ROUTEINFO_BY_TOPIC:
                 return this.getRouteInfoByTopic(ctx, request);
             case RequestCode.GET_BROKER_CLUSTER_INFO:
@@ -335,16 +353,40 @@ public class DefaultRequestProcessor extends AsyncNettyRequestProcessor implemen
         return response;
     }
 
+    /**
+     *
+     *  *   *  RocketMQ的路由发现是非实时的，当Topic路由出现变化后，nameServer不主动推送给客户端，而是由客户端定时拉取最新的路由。（注意是定时拉取最新的路由，也就是consumer和Producer存在定时任务）
+     *  *      *MQClientInstance 中会创建定时任务
+     *  *
+     *  *      TopicRouteData 就是从NameServer中获取的路由结果， 具体的返回结果是在  NameServer 路由发现实类 ： DefaultRequestProcessor#getRoutelnfoByTopic  方法中创建了TopicRouteData
+     *
+     * @param ctx
+     * @param request
+     * @return
+     * @throws RemotingCommandException
+     */
     public RemotingCommand getRouteInfoByTopic(ChannelHandlerContext ctx,
         RemotingCommand request) throws RemotingCommandException {
+
         final RemotingCommand response = RemotingCommand.createResponseCommand(null);
         final GetRouteInfoRequestHeader requestHeader =
             (GetRouteInfoRequestHeader) request.decodeCommandCustomHeader(GetRouteInfoRequestHeader.class);
 
+        /**
+         * ：调用 RouterlnfoManager 的方法，从路由 表 topicQueueTable 、 brokerAddrTable 、
+         * fi l terServerTable 中分别填充 TopicRouteData 中的 List<QueueData＞、 List<BrokerData＞和
+         * filterServer 地址表。
+         */
         TopicRouteData topicRouteData = this.namesrvController.getRouteInfoManager().pickupTopicRouteData(requestHeader.getTopic());
 
         if (topicRouteData != null) {
+
             if (this.namesrvController.getNamesrvConfig().isOrderMessageEnable()) {
+                /**
+                 * 如果找到主题对应的路由信息并且该主题为顺序消息，则从 NameServer
+                 * KVconfig 中获取关于顺序消息相关的配置填充路由信息 。
+                 *
+                 */
                 String orderTopicConf =
                     this.namesrvController.getKvConfigManager().getKVConfig(NamesrvUtil.NAMESPACE_ORDER_TOPIC_CONFIG,
                         requestHeader.getTopic());

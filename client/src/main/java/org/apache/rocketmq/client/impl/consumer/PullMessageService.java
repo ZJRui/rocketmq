@@ -29,6 +29,9 @@ import org.apache.rocketmq.common.utils.ThreadUtils;
 
 public class PullMessageService extends ServiceThread {
     private final InternalLogger log = ClientLogger.getLog();
+    /**
+     *
+     */
     private final LinkedBlockingQueue<PullRequest> pullRequestQueue = new LinkedBlockingQueue<PullRequest>();
     private final MQClientInstance mQClientFactory;
     private final ScheduledExecutorService scheduledExecutorService = Executors
@@ -45,6 +48,9 @@ public class PullMessageService extends ServiceThread {
 
     public void executePullRequestLater(final PullRequest pullRequest, final long timeDelay) {
         if (!isStopped()) {
+            /**
+             * 延迟将请求放置到队列中
+             */
             this.scheduledExecutorService.schedule(new Runnable() {
                 @Override
                 public void run() {
@@ -56,6 +62,10 @@ public class PullMessageService extends ServiceThread {
         }
     }
 
+    /**
+     * 将pull请求放置到队列中
+     * @param pullRequest
+     */
     public void executePullRequestImmediately(final PullRequest pullRequest) {
         try {
             this.pullRequestQueue.put(pullRequest);
@@ -76,22 +86,149 @@ public class PullMessageService extends ServiceThread {
         return scheduledExecutorService;
     }
 
+    /**
+     * 消息消费有两种模式： 所谓拉模式，是消费端主动发起拉请求，而推模式是消息到达消息服务器后，推送给消息消费者
+     *
+     *  RocketMQ 消息推模式的实现基于拉模式，在拉模式上包装一层，一个拉取任务完成后开始下一个拉取任务 。
+     */
     private void pullMessage(final PullRequest pullRequest) {
+        /**
+         * 找导对应的consumer
+         */
         final MQConsumerInner consumer = this.mQClientFactory.selectConsumer(pullRequest.getConsumerGroup());
         if (consumer != null) {
+            /**
+             * 注意pull Message取出consumer将consumer强制转为 PushConsumer，这里为什么可以强转？
+             *
+             * 根据消 费组名 从 MQClientlnstance 中获取消费者内部实现类 MQConsumerlnner ，令人
+             * 意外的 是这里将 consumer 强制转换为 DefaultMQPushConsumerlmpl ，也就是 PullMessage
+             * Service ，该线程只为 PUSH 模式服务， 那拉模式如何拉取消息呢？其实 细想也不难理解，
+             * PULL 模式 ， RocketMQ 只需要提供拉取消息 API 即可， 具体由应用程序显示调用拉取 API 。
+             *
+             * 我觉得：RocketMQ的推模式不是标准意义上的推模式。
+             *
+             * 可以这样理解推拉模式： 对于拉模式需要客户端主动调用API获取消息， 对于推模式，客户端无感知能够拿去到消息，而不需要自己主动调用API，rocketMQ
+             * 的推模式是通过一个线程 不断的拉取数据 将这个数据伪装成broker推送过来的。
+             *
+             * RocketMQ 并没有真正实现推模式，而是消费者主动向消息服务器拉取消息， RocketMQ 推模式是循环向消息服务端发送消息拉取请求，《RocketMQ技术内幕 5.4.3 消息拉取长轮询机制分析》
+             *
+             *=======================
+             * 对于PushConsumer ，我们在创建Consumer的时候没有指定topic，但是通过PushConsumer的subscribe方法指定了主题。 PullConsumer中并没有subscribe方法
+             *
+             DefaultMQPushConsumer consumer = new DefaultMQPushConsumer("testVA");
+             consumer.setNamesrvAddr("192.168.102.73:9876");
+             consumer.setMessageModel(MessageModel.BROADCASTING);
+             consumer.subscribe("topicTestVA", "*");
+
+             *
+             * ================
+             *  对于拉模式 如何体现客户端 主动拉取呢？
+             *         //创建PullConsumer的时候没有指定topic，而是在创建MessageQueue的时候才指定了Topic
+             *         DefaultMQPullConsumer consumer = new DefaultMQPullConsumer("please_rename_unique_group_name_5");
+             *         consumer.setNamesrvAddr("127.0.0.1:9876");
+             *         consumer.start();
+             *
+             *         try {
+             *             MessageQueue mq = new MessageQueue();
+             *             mq.setQueueId(0);
+             *             mq.setTopic("TopicTest3");
+             *             mq.setBrokerName("vivedeMacBook-Pro.local");
+             *
+             *             long offset = 26;
+             *
+             *             long beginTime = System.currentTimeMillis();
+             *             PullResult pullResult = consumer.pullBlockIfNotFound(mq, null, offset, 32);
+             *             System.out.printf("%s%n", System.currentTimeMillis() - beginTime);
+             *             System.out.printf("%s%n", pullResult);
+             *         } catch (Exception e) {
+             *             e.printStackTrace();
+             *         }
+             *
+             * 咋这段代码中我们创建了一个Consumer，然后创建了一个MessageQueue，手动调用API拉取这个MessageQUeue 得到一个PullResult
+             *
+             * ================================
+             *
+             * 另外 不管是PullConsumer 还是PushConsumer 他们的start方法都会调用 MQClientInstance的start方法，
+             * 在MQClientInstance的start方法内会启动 PullMessageService线程，也就是说不管是Pull 还是Push。 PullMessageService都会存在。
+             * 同时启动的Consumer 还会 注册到MQClientInstance， key是ProducerGroup，value是Consumer，也就是说consumerTable中既有
+             *
+             *MQClientInstance.consumerTable.putIfAbsent(group, consumer);
+             *=======================
+             * 如何保证 下面的强转不会出错？ 也就是如何保证从consumerTable中 根据group取出的 Consumer一定是 PushConsumer？
+             *
+             *  （1）问题一： 我们能创建一个PullConsumer 和一个PushConsumer，但是这两个consumer的group相同吗？ 答案不可以，一个ConsumerGroup在MQClientInstance中只能有一个Consumer
+             *   （2）pullMessage 的请求参数 PullRequest是怎么来的？ 也就是PullRequest对象是怎么来的 主要有两个地方
+             *                  * (1)一个是在RocketMQ根据PullRequest拉取任务执行完一次消息拉取任务后，又将PullRequest对象放入到PullRequestQueue
+             *                  * （2）第二个是在RebalanceImpl中创建， 这里是PullRequest对象真正创建的地方org.apache.rocketmq.client.impl.consumer.RebalanceImpl#updateProcessQueueTableInRebalance(java.lang.String, java.util.Set, boolean)
+             *
+             *     在RebalanceImpl的updateProcessQueueTableInRebalance 方法中会创建PullRequest， 将这些PullRequest手机起来 然后调用  this.dispatchPullRequest(pullRequestList);其中this就是RebalanceImpl对象
+             *
+             *
+             *     对于RebalancePushImpl的dispatchPullRequest 实现如下， 使用持有的PushConsumer的executePullRequest 方法 将每一个PullRequest放置到 PullMessageService的队列中
+             *       @Override
+             *     public void dispatchPullRequest(List<PullRequest> pullRequestList) {
+             *         for (PullRequest pullRequest : pullRequestList) {
+             *             this.defaultMQPushConsumerImpl.executePullRequestImmediately(pullRequest);
+             *             log.info("doRebalance, {}, add a new pull request {}", consumerGroup, pullRequest);
+             *         }
+             *     }
+             *
+             *     对于RebalancePullImpl的dispatchPullRequest的实现如下： 没有做任何处理， 这就保证了 放置到PullMessageService的队列中的PullRequest 全部都是 RebalancePushImpl的dispatchPullRequest 方法使用PushConsumer 放入的 PullRequest
+             *      @Override
+             *     public void dispatchPullRequest(List<PullRequest> pullRequestList) {
+             *     }
+             *
+             *=============================
+             *  PullMessageService 负责对消息队列进行消息拉取，从远端服务器
+             * 拉取消息后将消息存入 ProccessQueue 消息队列处理队列中，然后调用 Consum 巳Message Ser-
+             * vice#submitConsumeRequest 方法进行消息消费，使用线程池来消费消息，确保了消息拉取
+             * 与消息消费的解祸
+             *
+             */
             DefaultMQPushConsumerImpl impl = (DefaultMQPushConsumerImpl) consumer;
+
+            /**
+             * PullRequest中持有MessageQueue和ProcessQueue，在pullmessage 方法中 会更新ProcessQueue的上次拉取时间为当前时间
+             */
             impl.pullMessage(pullRequest);
         } else {
             log.warn("No matched consumer for the PullRequest {}, drop it", pullRequest);
         }
     }
 
+    /**
+     * PullMessageService 在启动时由于pullRequestQueue中没有PullRequest对象，故PullMessageService线程将会阻塞。
+     * 问题1：PullRequest对象在什么时候创建并加入到PullRequestQueue中一以便唤醒PullMessageService线程？
+     * Rebalancesrvice 线程每隔 2 0s 对 消 费者订阅 的主题进行一次 队列重新分配 ， 每一次分配都会获取主题的所有队列、从 Broke r 服务器实时查询当前该主题该消费组内消费者列
+     * 表 ， 对新分配的消息队列会创建对应的 PullRequest 对象。 在一个 JVM 进程中，同一个消费组 同一个队列只会存在一个 PullRequest 对象。
+     *
+     *
+     * 问题2： 集群内多个消费者是如何负载主题下的多个消费队列，如果有新的消费者加入时，消息队列又会如何重新分布？
+     * 由于每次进行队列重新负载时会从 Broker 实时查询出当前消费组内所有消费者，并且
+     * 对消息队列、消费者列表进行排序，这样新加入的消费者就会在队列重新分布时分配到消
+     * 费队列从而消费消息 。
+     *
+     * RocketMQ消息队列重新分布是由RebalanceService线程来实现的，一个MQClientInstance持有一个RebalanceService实现，并且伴随着MQClientInstance的启动而启动
+     */
     @Override
     public void run() {
         log.info(this.getServiceName() + " service started");
 
+        /**
+         * 消息消费有两种模式： 所谓拉模式，是消费端主动发起拉请求，而推模式是消息到达消息服务器后，推送给消息消费者。
+         *
+         * 消息啦模式主要由客户端手动调用消息拉取API，消息推模式是消息服务器主动将消息推送到消息消费端。
+         *
+         */
         while (!this.isStopped()) {
             try {
+                /**
+                 * 线程不断取出pull请求然后 拉消息
+                 * 那 PullRequest 是什么时候添加的呢？
+                 * 主要有两个地方
+                 * (1)一个是在RocketMQ根据PullRequest拉取任务执行完一次消息拉取任务后，又将PullRequest对象放入到PullRequestQueue
+                 * （2）第二个是在RebalanceImpl中创建， 这里是PullRequest对象真正创建的地方org.apache.rocketmq.client.impl.consumer.RebalanceImpl#updateProcessQueueTableInRebalance(java.lang.String, java.util.Set, boolean)
+                 */
                 PullRequest pullRequest = this.pullRequestQueue.take();
                 this.pullMessage(pullRequest);
             } catch (InterruptedException ignored) {

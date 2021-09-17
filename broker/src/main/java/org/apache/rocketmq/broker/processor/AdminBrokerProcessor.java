@@ -150,6 +150,11 @@ public class AdminBrokerProcessor extends AsyncNettyRequestProcessor implements 
     public RemotingCommand processRequest(ChannelHandlerContext ctx,
         RemotingCommand request) throws RemotingCommandException {
         switch (request.getCode()) {
+            /**
+             * 关于update_and_create_topic 参考 ： org.apache.rocketmq.client.impl.MQAdminImpl#createTopic(java.lang.String, java.lang.String, int, int)
+             * 从这里我们可以看到 AdminBrokerProcessor是位于broker模块，
+             * 也就说创建和更新topic的请求是交给broker来处理的，而不是nameServer
+             */
             case RequestCode.UPDATE_AND_CREATE_TOPIC:
                 return this.updateAndCreateTopic(ctx, request);
             case RequestCode.DELETE_TOPIC_IN_BROKER:

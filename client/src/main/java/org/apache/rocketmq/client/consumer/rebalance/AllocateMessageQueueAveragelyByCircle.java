@@ -25,6 +25,14 @@ import org.apache.rocketmq.common.message.MessageQueue;
 
 /**
  * Cycle average Hashing queue algorithm
+ *
+ *
+ * AllocateMessageQueueAveragelyByCircle ：平均轮询分配 ，推荐指数为 5 颗星。
+ * 举例来说，如果现在有 8 个消息消费队列咐，q2 ， 币， 俐， q5 ， 币， q7 ，币， 有 3 个消 费者 cl , c2,
+ * c3 ，那么根据该负载算法，消息 队列分配如下：
+ * cl :  ql,q4,q7
+ * c2 :  q2,q5,q8
+ * c3:  q3,q6
  */
 public class AllocateMessageQueueAveragelyByCircle implements AllocateMessageQueueStrategy {
     private final InternalLogger log = ClientLogger.getLog();

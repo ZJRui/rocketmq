@@ -45,14 +45,52 @@ import org.apache.rocketmq.common.protocol.route.TopicRouteData;
 import org.apache.rocketmq.common.sysflag.TopicSysFlag;
 import org.apache.rocketmq.remoting.common.RemotingUtil;
 
+/**
+ * NameServer 主要作用是为消息生产者和 消息消费者提供关于主题 Topic 的路由信息，
+ * 那么 NameServer 需 要存储路由 的 基础信息，还要能够管理 Broker 节点，包括路由 注册 、
+ * 路由删除等功能 。
+ *
+ */
 public class RouteInfoManager {
     private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.NAMESRV_LOGGER_NAME);
     private final static long BROKER_CHANNEL_EXPIRED_TIME = 1000 * 60 * 2;
+    /**
+     * 路由表的注册需要加写锁，防止并发修改路由表，比如注册Broker的时候需要判断Broker所属集群是否存在，如果不存在则创建集群，然后将broker加入到集群的Broker集合中
+     *
+     */
     private final ReadWriteLock lock = new ReentrantReadWriteLock();
+    /**
+     * Topic消息队列路由信息，消息发送时根据路由表进行负载均衡。    注意他的value是一个List，消息发送时会根据该属性路由表进行负载均衡
+     *
+     *
+     *  具体topicQueueTable和brokerAddrTable的运行时数据结构可以参考右侧 图片
+     */
     private final HashMap<String/* topic */, List<QueueData>> topicQueueTable;
+    /**
+     * broker 基础信息，包含brokerName,所属集群名称、主备Broker地址
+     * 多个Broker组成一个集群，BrokerName由相同的多台Broker组成Master-slave架构，brokerId为0代表master，大于0代表Slave。
+     *
+     * 也就是说一个BrokerName 可以有多个Broker节点，这些节点的brokerName是相同的，但是brokerId是不同的，因此我们在BrokerData中看到了brokerAddrs结构
+     */
     private final HashMap<String/* brokerName */, BrokerData> brokerAddrTable;
+    /**
+     * Broker集群信息，存储集群中的所有Broker名称
+     *
+     */
     private final HashMap<String/* clusterName */, Set<String/* brokerName */>> clusterAddrTable;
+    /**
+     * Broker 状态信息，NameServer每次收到心跳包都会替换该信息
+     *
+     * RocketMQ基于定于发布机制，一个topic拥有多个消息队列。
+     * 一个Broker为每一主题默认创建4个读队列4个写队列。 问题：如果一个topic要是有三个broker，则有12个队列？
+     * 多个Broker组成一个集群，BrokerName由相同的多台Broker组成Master-slave架构，brokerId为0代表master，大于0代表Slave。
+     * BrokerLiveInfo中的lastUpdateTimestamp存储上次收到Broker心跳包的时间
+     *
+     */
     private final HashMap<String/* brokerAddr */, BrokerLiveInfo> brokerLiveTable;
+    /**
+     * Broker上的filterServer列表，用于类模式消息过滤
+     */
     private final HashMap<String/* brokerAddr */, List<String>/* Filter Server */> filterServerTable;
 
     public RouteInfoManager() {
@@ -99,6 +137,29 @@ public class RouteInfoManager {
         return topicList.encode();
     }
 
+    /**
+     *
+     *          nameServer启动的时候会创建 定时任务 NameServer每隔10秒扫描一次broker，移除处于不激活状态的Broker.
+     *          *
+     *          * 注意这里只是移除不激活状态的Broker， 也就是说，不是NameServer发送请求你询问broker是否在线。
+     *          * 而是Broker节点主动发送请求来保持心跳， Broker发送的请求被处理的逻辑是在outeInfoManager#registerBroker(java.lang.String, java.lang.String, java.lang.String, long, java.lang.String, org.apache.rocketmq.common.protocol.body.TopicConfigSerializeWrapper, java.util.List, io.netty.channel.Channel)
+     *          * 方法中，在这个registerBroker方法中 ，每收到一个心跳包，就会执行一次brokerLiveTabel的更新，更新 brok erL iveTa ble 中关于 Broker 的状态信息以及路
+     *          * 由表（ topicQueueTable 、 brokerAddrTab le 、 brokerLi veTa bl e 、 fi lterServerTable ）
+     *          * 更新上述路由表（HashTable ）使用了锁粒度较少的读写锁，允许多个消息发送者（P roducer ）并发读，
+     *          * 保证消息发送时的高并发。 但同一时刻 NameServer 只处理一个 Broker 心跳包，多个心跳
+     *          * 包请求串行执行。 这也是读写锁经典使用场
+     *
+     *
+     * @param clusterName
+     * @param brokerAddr
+     * @param brokerName
+     * @param brokerId
+     * @param haServerAddr
+     * @param topicConfigWrapper
+     * @param filterServerList
+     * @param channel
+     * @return
+     */
     public RegisterBrokerResult registerBroker(
         final String clusterName,
         final String brokerAddr,
@@ -111,8 +172,30 @@ public class RouteInfoManager {
         RegisterBrokerResult result = new RegisterBrokerResult();
         try {
             try {
+                /**
+                 * 路由表的注册需要加写锁，防止并发修改RouteInfoManager中的路由表。
+                 *
+                 */
+                /**
+                 * 注意这里将ctx  ChannelHandlerContext 向下传递，也就是socket连接
+                 * 因为这个类所在的模块时 nameserver， 实际上这个ctx 也就代表着 Broker的socket链接，
+                 * 这ctx最终会保存到BrokerLiveInfo，实际上是通过ctx得到了channel
+                 *
+                 * 也就是说NameServer与Broker保持长连接，Broker状态存储在看brokerLiveTable中，nameServer没收到一个心跳包 将更新BrokerLiveTable中关于Broker的状态信息及
+                 * 路由表（topicQueueTable,borkerAddrTable, brokerLiveTable, filterServerTable）更新上述路由表使用了粒度较少的读写锁，允许多个消息发送者Producer并发读，保证消息发送
+                 * 时的高并发。单同一时刻NameServer只处理一个Broker心跳包，多个心跳包请求串行执行。
+                 *
+                 *
+                 */
                 this.lock.writeLock().lockInterruptibly();
 
+                /**
+                 * 首先判断Broker所在的集群是否存在，如果不存在则创建，然后将Broker加入到集群Broker列表中。
+                 *
+                 * 从这里我们可以看到对于集群来说 他关心的并不是这个集群中有多少个Broker节点，而是关心有多少个BrokerName
+                 *
+                 * 每一个BrokerName内构成一主多从结构。
+                 */
                 Set<String> brokerNames = this.clusterAddrTable.get(clusterName);
                 if (null == brokerNames) {
                     brokerNames = new HashSet<String>();
@@ -120,8 +203,16 @@ public class RouteInfoManager {
                 }
                 brokerNames.add(brokerName);
 
+                /**
+                 * 记录该broker是否是第一次注册。第一次注册的判断条件就是
+                 * 该Broker 对应的BrokerName的BrokerData中  没有该BrokerId的broker
+                 */
                 boolean registerFirst = false;
 
+                /**
+                 * 获取到这个指定的BrokerName对应的 主从架构中的Broker信息
+                 *
+                 */
                 BrokerData brokerData = this.brokerAddrTable.get(brokerName);
                 if (null == brokerData) {
                     registerFirst = true;
@@ -131,30 +222,81 @@ public class RouteInfoManager {
                 Map<Long, String> brokerAddrsMap = brokerData.getBrokerAddrs();
                 //Switch slave to master: first remove <1, IP:PORT> in namesrv, then add <0, IP:PORT>
                 //The same IP:PORT must only have one record in brokerAddrTable
+                /**
+                 * //从机切换到主机:首先移除IP:PORT&gt;在namesrv中添加&lt;0, IP:PORT&gt;//相同的IP:PORT在brokerAddrTable中只能有一条记录
+                 */
                 Iterator<Entry<Long, String>> it = brokerAddrsMap.entrySet().iterator();
                 while (it.hasNext()) {
                     Entry<Long, String> item = it.next();
+                    /**
+                     * 如果新添加的Broker 的brokerAddr 已经在 brokerData中且这个Broker的brokerId 与BrokerData中对应的数据的brokerId不同则移除。
+                     */
                     if (null != brokerAddr && brokerAddr.equals(item.getValue()) && brokerId != item.getKey()) {
                         it.remove();
                     }
                 }
 
+                /**
+                 * 将brokerId和brokerAddr放置到brokerData中，如果brokerData中未曾有过该brokerId则表示第一次注册。
+                 */
                 String oldAddr = brokerData.getBrokerAddrs().put(brokerId, brokerAddr);
                 registerFirst = registerFirst || (null == oldAddr);
 
+                /**
+                 * 下面的if条件中判断了masterId是否等于BrokerId
+                 *
+                 * 只有当请求 中broker的id为0的时候我们才 执行 下面的createAndUpdateQueueData，也就是创建QueueData
+                 * 因此我们说一个BrokerName就有一个QueueData
+                 *
+                 */
                 if (null != topicConfigWrapper
                     && MixAll.MASTER_ID == brokerId) {
+                    /**
+                     * 如果brokerid为0，表示master节点，并且Broker Topic配置信息发生变化或者是初次注册,
+                     *
+                     *
+                     *
+                     *
+                     *这个topicConfigWrapper是啥？他是从请求体中解析而来的，请求中会带有一个叫做dataVersion的数据，
+                     * 判断请求中的dataVersion和当前nameServer的brokerLiveTable 中保存的dataVersion是否一致。
+                     *
+                     * topicConfigWrapper的由来：
+                     *   registerBrokerBody = RegisterBrokerBody.decode(request.getBody(), requestHeader.isCompressed());
+                     *    topicConfigWrapper=registerBrokerBody.getTopicConfigSerializeWrapper(),
+                     */
                     if (this.isBrokerTopicConfigChanged(brokerAddr, topicConfigWrapper.getDataVersion())
                         || registerFirst) {
+                        /**
+                         * 如果brokerid为0，表示master节点，并且Broker Topic配置信息发生变化或者是初次注册 ，则需要创建或者更新topic路由元数据，填充topicQueueTable。
+                         * 其实就是为默认主题自动注册路由信息，
+                         * 在这个注册的路由中有一个特殊的Topic：mixAll.default_topic ，其中包含mixAll.default_topic的路由信息。
+                         * 当消息生产者发送主题时，如果该主题未创建并且brokerconfig的autoCreateTopicEnable为true，将返回Default_topic的路由信息。
+                         *
+                         *=============
+                         *
+                         *
+                         * 注意下面为什么是一个map结构？ 因为Broker节点注册的时候会携带自身的Topic信息， 一个Broker节点可能配置了多个topic信息。
+                         * 然后我们根据Broker带过来的topic信息创建topic对应的Queue。  尽管这个Broker有多个Topic，但是他的BrokerName 是唯一的 。
+                         *
+                         * 也就是说假设当前 Broker节点的name是 broker_A，他有三个topic，则他需要为每一个topic 创建一个关于该topic下 broker_A的QueueData
+                         *
+                         */
                         ConcurrentMap<String, TopicConfig> tcTable =
                             topicConfigWrapper.getTopicConfigTable();
                         if (tcTable != null) {
                             for (Map.Entry<String, TopicConfig> entry : tcTable.entrySet()) {
+                                /**
+                                 *   * 只有当请求 中broker的id为0的时候我们才 执行 下面的createAndUpdateQueueData，也就是创建QueueData
+                                 *     因此我们说一个BrokerName就有一个QueueData
+                                 *
+                                 *     根据该topic的TopicConfig 创建QueueData； topic下可以有多个BrokerName，然后为每一个BrokerName创建一个QueueData
+                                 */
                                 this.createAndUpdateQueueData(brokerName, entry.getValue());
                             }
                         }
                     }
-                }
+                }//
+
 
                 BrokerLiveInfo prevBrokerLiveInfo = this.brokerLiveTable.put(brokerAddr,
                     new BrokerLiveInfo(
@@ -166,6 +308,9 @@ public class RouteInfoManager {
                     log.info("new broker registered, {} HAServer: {}", brokerAddr, haServerAddr);
                 }
 
+                /**
+                 * 注册Broker的过滤器Server地址列表。一个Broker上会关联多个FilterServer消息过滤服务器
+                 */
                 if (filterServerList != null) {
                     if (filterServerList.isEmpty()) {
                         this.filterServerTable.remove(brokerAddr);
@@ -174,6 +319,10 @@ public class RouteInfoManager {
                     }
                 }
 
+                /**
+                 * ；如果此 Broker 为从节点，则需要查找
+                 * 该 Broker 的 Master 的节点信息，并更新对应 的 masterAddr 属性。
+                 */
                 if (MixAll.MASTER_ID != brokerId) {
                     String masterAddr = brokerData.getBrokerAddrs().get(MixAll.MASTER_ID);
                     if (masterAddr != null) {
@@ -215,6 +364,10 @@ public class RouteInfoManager {
     }
 
     private void createAndUpdateQueueData(final String brokerName, final TopicConfig topicConfig) {
+        /**
+         * 为这个BrokerName 创建一个QueueData
+         *
+         */
         QueueData queueData = new QueueData();
         queueData.setBrokerName(brokerName);
         queueData.setWriteQueueNums(topicConfig.getWriteQueueNums());
@@ -222,6 +375,9 @@ public class RouteInfoManager {
         queueData.setPerm(topicConfig.getPerm());
         queueData.setTopicSynFlag(topicConfig.getTopicSysFlag());
 
+        /**
+         * 注意这里是根据topicName获取该Topic的QueueDataList
+         */
         List<QueueData> queueDataList = this.topicQueueTable.get(topicConfig.getTopicName());
         if (null == queueDataList) {
             queueDataList = new LinkedList<QueueData>();
@@ -231,6 +387,17 @@ public class RouteInfoManager {
         } else {
             boolean addNewOne = true;
 
+            /**
+             * 在所有的 QUeueDataList中寻找brokerName等于当前BrokerName的queueData
+             *
+             * 那么也就是说 一个Topic 针对一个BrokerName 有一个QueueData。
+             *
+             * 也就是说当我们新增一个Broker节点的时候，我们要看这个Broker节点的BrokerName是什么，如果这个brokerName已经存在了，那么并不会将这个新创建的QueueData放入到queueDataList中
+             *
+             * 如果这个BrokerName是一个新的则将创建的QueueData放入到queueDataList中。
+             *
+             *
+             */
             Iterator<QueueData> it = queueDataList.iterator();
             while (it.hasNext()) {
                 QueueData qd = it.next();
@@ -385,6 +552,11 @@ public class RouteInfoManager {
         try {
             try {
                 this.lock.readLock().lockInterruptibly();
+                /**
+                 * 根据Topic的名称从topicQueueTable获取topic信息。
+                 * 假设集群中有两个BrokerName，则会返回2个QueueData对象。
+                 *
+                 */
                 List<QueueData> queueDataList = this.topicQueueTable.get(topic);
                 if (queueDataList != null) {
                     topicRouteData.setQueueDatas(queueDataList);
@@ -393,9 +565,16 @@ public class RouteInfoManager {
                     Iterator<QueueData> it = queueDataList.iterator();
                     while (it.hasNext()) {
                         QueueData qd = it.next();
+                        /**
+                         * 存储Topic中存在的BrokerName
+                         */
                         brokerNameSet.add(qd.getBrokerName());
                     }
 
+                    /**
+                     * 对于每一个BrokerName 可以有多个Broker节点构成 主从结构，获取每一个BrokerName中broker节点信息， 一个BrokerName 中的所有broker
+                     * 构成一个BrokerData数据
+                     */
                     for (String brokerName : brokerNameSet) {
                         BrokerData brokerData = this.brokerAddrTable.get(brokerName);
                         if (null != brokerData) {
@@ -426,13 +605,31 @@ public class RouteInfoManager {
         return null;
     }
 
+    /**
+     *
+     * Broker消息服务器在启动时向所有的NameServer注册,Broker启动时会创建定时任务每隔30秒向NameServer发送心跳包，
+     * 心跳包中包含BrokerId，broker地址，Broker名称，所属集群等信息；NameServer与每台Broker服务器保持长连接，
+     * NameServer启动时会创建定时任务，每隔10s定期检查内存中的Broker活跃表，如果检测到长时间（120s）未收到Broker的心跳，
+     * 则认定为Broker宕机，则从路由表中将其移除。但是路由变化不会马上通知消息生产者。为什么要这样设计？主要是为了降低NameServer实现的负载型，
+     * 在消息发送端提供容错机制来保证消息发送的高可用性
+     *
+     * ，路由删除的方法，就是从 topic­
+     * Queue Table 、 brokerAddrTable 、 brokerLiveTable 、 filterServerTable 删除与 该 Broker 相 关的
+     * 信息，
+     */
     public void scanNotActiveBroker() {
         Iterator<Entry<String, BrokerLiveInfo>> it = this.brokerLiveTable.entrySet().iterator();
         while (it.hasNext()) {
             Entry<String, BrokerLiveInfo> next = it.next();
             long last = next.getValue().getLastUpdateTimestamp();
             if ((last + BROKER_CHANNEL_EXPIRED_TIME) < System.currentTimeMillis()) {
+                /**
+                 * 关闭与Broker的链接channel
+                 */
                 RemotingUtil.closeChannel(next.getValue().getChannel());
+                /**
+                 * 这里将 Broker活跃信息从brokerLiveTable 中移除
+                 */
                 it.remove();
                 log.warn("The broker channel expired, {} {}ms", next.getKey(), BROKER_CHANNEL_EXPIRED_TIME);
                 this.onChannelDestroy(next.getKey(), next.getValue().getChannel());
@@ -445,6 +642,42 @@ public class RouteInfoManager {
         if (channel != null) {
             try {
                 try {
+                    /**
+                     * 除非当前线程被中断，否则获取锁。
+                     * 如果锁可用，则获取锁并立即返回。
+                     * 如果锁不可用，那么当前线程将被禁用，以进行线程调度，并处于休眠状态，直到发生以下两种情况之一:
+                     * 当前线程获取锁;或
+                     * 其他一些线程中断当前线程，并且支持中断获取锁。
+                     * 如果当前线程:
+                     * 在进入该方法时设置中断状态;或
+                     * 在获取锁时中断，并且支持获取锁的中断，
+                     * 然后抛出InterruptedException，并清除当前线程的中断状态。
+                     * 实现注意事项
+                     * 在某些实现中，中断获取锁的能力可能是不可能的，如果可能的话，可能是开销很大的操作。程序员应该意识到这是可能的情况。实现应该在这种情况下进行文档记录。
+                     * 实现更倾向于响应中断而不是正常的方法返回。
+                     * Lock实现可能能够检测锁的错误使用，例如可能导致死锁的调用，并可能在这种情况下抛出(未检查的)异常。环境和异常类型必须由Lock实现记录。
+                     *
+                     *
+                     * ---------
+                     * lockInterruptibly 会抛出中断异常：InterruptedException ，但是这里内层并没有捕获该异常，外层会进行捕获处理
+                     *
+                     * QuestionA:  在这个方法的实现中， 为什么要在外面进行try catch  而不是
+                     *  try{
+                     *      lock.lockinterruptibly()
+                     *  }catch(){}
+                     *  finally{
+                     *      lock.unlock
+                     *  }
+                     *  参考：https://github.com/apache/rocketmq/issues/2814
+                     * answer: 事实上 unlock方法有可能会抛出异常，Yes, you were right about this. The unlock method will throw an Exception if current thread didn't obtain the lock, which means some exception happens when call the lock method.
+                     * Thank you for your replay.
+                     *
+                     *
+                     * lockInterruptibly的正确使用方式参考：https://github.com/alibaba/p3c/issues/287
+                     *
+                     *
+                     * 申 请写锁，根据 brokerAddress 从 brokerLiveTab le 、 filters 巳rverTable 移除，
+                     */
                     this.lock.readLock().lockInterruptibly();
                     Iterator<Entry<String, BrokerLiveInfo>> itBrokerLiveTable =
                         this.brokerLiveTable.entrySet().iterator();
@@ -456,6 +689,11 @@ public class RouteInfoManager {
                         }
                     }
                 } finally {
+
+                    /**
+                     * 事实上 unlock方法有可能会抛出异常，Yes, you were right about this. The unlock method will throw an Exception if current thread didn't obtain the lock, which means some exception happens when call the lock method.
+                     *                      * Thank you for your replay.
+                     */
                     this.lock.readLock().unlock();
                 }
             } catch (Exception e) {
@@ -473,6 +711,9 @@ public class RouteInfoManager {
 
             try {
                 try {
+                    /**
+                     * 申 请写锁，根据 brokerAddress 从 brokerLiveTab le 、 filters 巳rverTable 移除，
+                     */
                     this.lock.writeLock().lockInterruptibly();
                     this.brokerLiveTable.remove(brokerAddrFound);
                     this.filterServerTable.remove(brokerAddrFound);

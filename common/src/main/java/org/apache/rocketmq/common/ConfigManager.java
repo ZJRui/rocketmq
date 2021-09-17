@@ -72,6 +72,11 @@ public abstract class ConfigManager {
         if (jsonString != null) {
             String fileName = this.configFilePath();
             try {
+                /**
+                 * 放置到文件中 fileName
+                 *
+                 * C:\Users\Pekon\store\config\store.json
+                 */
                 MixAll.string2File(jsonString, fileName);
             } catch (IOException e) {
                 log.error("persist file " + fileName + " exception", e);

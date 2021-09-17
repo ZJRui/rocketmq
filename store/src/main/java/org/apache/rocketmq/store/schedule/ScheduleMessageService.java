@@ -48,19 +48,42 @@ import org.apache.rocketmq.store.config.StorePathConfigHelper;
 public class ScheduleMessageService extends ConfigManager {
     private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.STORE_LOGGER_NAME);
 
+    /**
+     * ：第一次调度时延迟的时间，默认为 ls 。
+     */
     private static final long FIRST_DELAY_TIME = 1000L;
+    /**
+     *  每一延时级别调度一次后延迟该时间间隔后再放入调度池。
+     */
     private static final long DELAY_FOR_A_WHILE = 100L;
+    /**
+     * ：发送异常后延迟该时间后再继续参与调度 。
+     */
     private static final long DELAY_FOR_A_PERIOD = 10000L;
 
+    /**
+     * ：延
+     * 迟级别，将” ls 5s  10s 30s  lm 2m 3m 4m Sm 6m 7m 8m 9m 10m 20m 30m lh 2h ”字符串解析
+     * 成 delay LevelTable ， 转换后的数据结构类似｛ 1: 1000 ,2 :5000 立30000, ... ｝ 。
+     */
     private final ConcurrentMap<Integer /* level */, Long/* delay timeMillis */> delayLevelTable =
         new ConcurrentHashMap<Integer, Long>(32);
 
+    /**
+     * ：延迟级别消息消费进度 。
+     */
     private final ConcurrentMap<Integer /* level */, Long/* offset */> offsetTable =
         new ConcurrentHashMap<Integer, Long>(32);
+    /**
+     * ：默认消息存储器。
+     */
     private final DefaultMessageStore defaultMessageStore;
     private final AtomicBoolean started = new AtomicBoolean(false);
     private Timer timer;
     private MessageStore writeMessageStore;
+    /**
+     *  MessageStoreConfig#messageDelayLevel 中最大消息延迟级别 。
+     */
     private int maxDelayLevel;
 
     public ScheduleMessageService(final DefaultMessageStore defaultMessageStore) {
@@ -111,8 +134,27 @@ public class ScheduleMessageService extends ConfigManager {
     }
 
     public void start() {
+        /**
+         * start 根据延迟级别创建对应 的定时任务，启动定时任务持久化延迟消息 队列进度存储。
+         */
         if (started.compareAndSet(false, true)) {
             this.timer = new Timer("ScheduleMessageTimerThread", true);
+            /**
+             * ：根据延迟队列创建定时任务，遍历延迟级别 ，根据延迟级别 level 从 offs etTable
+             * 中获取消 费 队列的 消费进度， 如果不存在， 则使用 0 。 也就是说每一个延迟级别对应一个消
+             * 息消费 队列 。 然后创建定时任务，每一个定时任务第一次启动时默认延迟 ls 先执行一次定
+             * 时任务，第二次调度开始才使用相应的延迟时间 。 延迟级别与消息消费 队列 的映射关系为 ：
+             * 消息 队列 ID ＝延迟级别一 l 。
+             *
+             * 定时消息的第 一 个设计关键点是 ， 定时消息单独一个 主 题 ： SCHEDULE TOPIC
+             * xx xx ， 该主题 下 队列数量等于 MessageStoreConfig# messageDelayLevel 配置的延迟级别数
+             * 量 ， 其对应关系为 queueld 等于延迟级别减 1 。 ScheduleMessageS 巳rvice 为每 一 个延迟级别
+             * 创建 一 个定时 Timer 根据延迟级别对应的延迟时间进行延迟调度 。 在消息发送时 ， 如果消
+             * 息的延迟级别 delay Level 大于 0 ， 将消息的原主题名称、队列 ID 存入消息的属性中，然后
+             * 改变消息的 主 题、队列与延迟主题与延迟 主 题所属队列 ， 消息将最终转发到延迟队列的消
+             * 费队列 。
+             *
+             */
             for (Map.Entry<Integer, Long> entry : this.delayLevelTable.entrySet()) {
                 Integer level = entry.getKey();
                 Long timeDelay = entry.getValue();
@@ -126,6 +168,10 @@ public class ScheduleMessageService extends ConfigManager {
                 }
             }
 
+            /**
+             * Step2 ：创建定时任务，每隔 10s 持久化一次延迟队列的消息消 费进度（延迟消息调进
+             * 度），持久化频率可以通过 fl u sh D e layOffsetlnterva l 配置属性进行设置。
+             */
             this.timer.scheduleAtFixedRate(new TimerTask() {
 
                 @Override
@@ -161,6 +207,10 @@ public class ScheduleMessageService extends ConfigManager {
     }
 
     public boolean load() {
+        /**
+         * 该方法主要完成延迟消息消费队列消息进度的加载与 delayL 巳velTable 数据的构造，延
+         * 迟队列消息消费进度默认存储路径为$｛ROCKET一HOME} /s tore/ config/delayOffs 巳t. on ，
+         */
         boolean result = super.load();
         result = result && this.parseDelayLevel();
         return result;
@@ -260,6 +310,18 @@ public class ScheduleMessageService extends ConfigManager {
         }
 
         public void executeOnTimeup() {
+            /**
+             * 定时消息的第二个设计关键点 ： 消息存储时如果消息的延迟级别属性 delay Level 大
+             * 于 0 ，则会各份原主题 、 原队列到消息属性 中，其 键分别为 PROPERTY . REAL  TOPIC 、
+             * PROPERTY_ REAL_ QUEUE_ ID ， 通过为不同的延迟级别创建不同的调 度任 务 ， 当时间到
+             * 达后执行调度任务 ， 调度任 务 主要就是根据延迟拉取消息消费进度从延迟队列中拉取消息，
+             * 然后从 comm itl og 中 加载完整消息，清除延迟级别属性并恢复原先的主题、队列，再次创
+             * 建一条新的消息存入到 commitlog 中并转发到消息消费队列供消息消费者消费 。
+             */
+            /**
+             * Stepl ：根据队列 ID 与延迟主题查找消息消费 队列，如果未找到 ， 说明目前并不存在
+             * 该延时级别的消息，忽略本次任务，根据延时级别创建下一次调度任务即可。
+             */
             ConsumeQueue cq =
                 ScheduleMessageService.this.defaultMessageStore.findConsumeQueue(TopicValidator.RMQ_SYS_SCHEDULE_TOPIC,
                     delayLevel2QueueId(delayLevel));
@@ -267,12 +329,20 @@ public class ScheduleMessageService extends ConfigManager {
             long failScheduleOffset = offset;
 
             if (cq != null) {
+                /**
+                 * Step2 ： 根据 offse t 从消 息消费队列中获取当前队列中所有有效的消息。 如果未找到，
+                 * 则更新一下延迟队列定时拉取进度并创建定时任务待下一次继续尝试。
+                 */
                 SelectMappedBufferResult bufferCQ = cq.getIndexBuffer(this.offset);
                 if (bufferCQ != null) {
                     try {
                         long nextOffset = offset;
                         int i = 0;
                         ConsumeQueueExt.CqExtUnit cqExtUnit = new ConsumeQueueExt.CqExtUnit();
+                        /**
+                         *  遍历 C onsumeQueue ，每一个标准 C onsumeQueue 条目为 2 0 个字节 。 解析出消
+                         *  息的物理偏移量、 消息长度 、 消息 tag hashcode ，为从 commitlog 加载具体的消息做准备。
+                         */
                         for (; i < bufferCQ.getSize(); i += ConsumeQueue.CQ_STORE_UNIT_SIZE) {
                             long offsetPy = bufferCQ.getByteBuffer().getLong();
                             int sizePy = bufferCQ.getByteBuffer().getInt();
@@ -298,18 +368,28 @@ public class ScheduleMessageService extends ConfigManager {
                             long countdown = deliverTimestamp - now;
 
                             if (countdown <= 0) {
+                                /**
+                                 * 根据消息物理偏移量与消息大小从 commitlog 文件 中查找消 息 。 如果未找到消
+                                 * 息，打印错误 日 志，根据延迟时间创建下一个定时器。
+                                 */
                                 MessageExt msgExt =
                                     ScheduleMessageService.this.defaultMessageStore.lookMessageByOffset(
                                         offsetPy, sizePy);
 
                                 if (msgExt != null) {
                                     try {
+                                        /**
+                                         *
+                                         */
                                         MessageExtBrokerInner msgInner = this.messageTimeup(msgExt);
                                         if (TopicValidator.RMQ_SYS_TRANS_HALF_TOPIC.equals(msgInner.getTopic())) {
                                             log.error("[BUG] the real topic of schedule msg is {}, discard the msg. msg={}",
                                                     msgInner.getTopic(), msgInner);
                                             continue;
                                         }
+                                        /**
+                                         * ：将消息再次存入到 commitlog ，并转发到主题对应的消息队列上，供消费者再次消费
+                                         */
                                         PutMessageResult putMessageResult =
                                             ScheduleMessageService.this.writeMessageStore
                                                 .putMessage(msgInner);
@@ -325,6 +405,9 @@ public class ScheduleMessageService extends ConfigManager {
                                             ScheduleMessageService.this.timer.schedule(
                                                 new DeliverDelayedMessageTimerTask(this.delayLevel,
                                                     nextOffset), DELAY_FOR_A_PERIOD);
+                                            /**
+                                             * 更新延迟队列拉取进度 。
+                                             */
                                             ScheduleMessageService.this.updateOffset(this.delayLevel,
                                                 nextOffset);
                                             return;
@@ -377,6 +460,10 @@ public class ScheduleMessageService extends ConfigManager {
         }
 
         private MessageExtBrokerInner messageTimeup(MessageExt msgExt) {
+            /**
+             *  根据消息重新构建新的消息对象，清除消息的延迟级别属性（ delayLevel ）、并
+             * 恢复消息原先的消息主题与消息消费队列，消息的消费次数 reconsumeT imes 并不会丢失
+             */
             MessageExtBrokerInner msgInner = new MessageExtBrokerInner();
             msgInner.setBody(msgExt.getBody());
             msgInner.setFlag(msgExt.getFlag());

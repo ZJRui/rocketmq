@@ -91,13 +91,22 @@ public class MQClientInstance {
     private final int instanceIndex;
     private final String clientId;
     private final long bootTimestamp = System.currentTimeMillis();
+    /**
+     * 对于新创建的Producer 在 start的时候 org.apache.rocketmq.client.impl.producer.DefaultMQProducerImpl#start(boolean) 会调用registerProducer，在register的时候会放置到producerTable
+     * key是ProducerGroup， 这表示在一个JVM进程内（准确来说应该是在一个MQClientInstance对象内） 一个ProducerGroup就仅有一个唯一的producer
+     */
     private final ConcurrentMap<String/* group */, MQProducerInner> producerTable = new ConcurrentHashMap<String, MQProducerInner>();
+    /**
+     * key是consumerGroup，这表示在一个JVM进程内（准确来说应该是在一个MQClientInstance对象内） 一个ConsumerGroup就仅有一个唯一的consumer
+     *
+     */
     private final ConcurrentMap<String/* group */, MQConsumerInner> consumerTable = new ConcurrentHashMap<String, MQConsumerInner>();
     private final ConcurrentMap<String/* group */, MQAdminExtInner> adminExtTable = new ConcurrentHashMap<String, MQAdminExtInner>();
     private final NettyClientConfig nettyClientConfig;
     private final MQClientAPIImpl mQClientAPIImpl;
     private final MQAdminImpl mQAdminImpl;
     private final ConcurrentMap<String/* Topic */, TopicRouteData> topicRouteTable = new ConcurrentHashMap<String, TopicRouteData>();
+
     private final Lock lockNamesrv = new ReentrantLock();
     private final Lock lockHeartbeat = new ReentrantLock();
     private final ConcurrentMap<String/* Broker Name */, HashMap<Long/* brokerId */, String/* address */>> brokerAddrTable =
@@ -111,7 +120,18 @@ public class MQClientInstance {
         }
     });
     private final ClientRemotingProcessor clientRemotingProcessor;
+    /**
+     * 创建MQClientInstance的时候会创建一个PullMessageService对象，在构造器中。
+     */
     private final PullMessageService pullMessageService;
+    /**
+     * PullMessageService 在启动时由于pullRequestQueue中没有PullRequest对象，故PullMessageService线程将会阻塞。
+     * 问题1：PullRequest对象在什么时候创建并加入到PullRequestQueue中一以便唤醒PullMessageService线程？
+     *
+     * 问题2： 集群内多个消费者是如何负载主题下的多个消费队列，如果有新的消费者加入时，消息队列又会如何重新分布？
+     *
+     * RocketMQ消息队列重新分布是由RebalanceService线程来实现的，一个MQClientInstance持有一个RebalanceService实现，并且伴随着MQClientInstance的启动而启动
+     */
     private final RebalanceService rebalanceService;
     private final DefaultMQProducer defaultMQProducer;
     private final ConsumerStatsManager consumerStatsManager;
@@ -145,6 +165,10 @@ public class MQClientInstance {
 
         this.rebalanceService = new RebalanceService(this);
 
+        /**
+         * 注意 MQClientInstance 内部有一个defaultMQProducer属性，这个属性时RocketMQ 内部的producer，区别于应用程序中使用的producer
+         *  CLIENT_INNER_PRODUCER
+         */
         this.defaultMQProducer = new DefaultMQProducer(MixAll.CLIENT_INNER_PRODUCER_GROUP);
         this.defaultMQProducer.resetClientConfig(clientConfig);
 
@@ -157,15 +181,33 @@ public class MQClientInstance {
             MQVersion.getVersionDesc(MQVersion.CURRENT_VERSION), RemotingCommand.getSerializeTypeConfigInThisServer());
     }
 
+    /**
+     *
+     *
+     * @param topic
+     * @param route
+     * @return
+     */
     public static TopicPublishInfo topicRouteData2TopicPublishInfo(final String topic, final TopicRouteData route) {
+        /**
+         * 将Topic信息封装成一个路由信息TopicPublishInfo，交给每一个Producer
+         * Producer关心的是这个topic中可写队列的信息。
+         */
         TopicPublishInfo info = new TopicPublishInfo();
         info.setTopicRouteData(route);
+        /**
+         * 如果从NameSever中取到的TopicRouteData 配置该topic是order
+         */
         if (route.getOrderTopicConf() != null && route.getOrderTopicConf().length() > 0) {
+
             String[] brokers = route.getOrderTopicConf().split(";");
             for (String broker : brokers) {
                 String[] item = broker.split(":");
                 int nums = Integer.parseInt(item[1]);
                 for (int i = 0; i < nums; i++) {
+                    /**
+                     * 这里说明一个MessageQueue 和一个broker绑定在一起
+                     */
                     MessageQueue mq = new MessageQueue(topic, item[0], i);
                     info.getMessageQueueList().add(mq);
                 }
@@ -173,11 +215,34 @@ public class MQClientInstance {
 
             info.setOrderTopic(true);
         } else {
+            /**
+             * 获取topic的QueueData，两个BrokerName 就有两个QueueData
+             */
             List<QueueData> qds = route.getQueueDatas();
+            /**
+             * 根据brokerName进行排序.
+             *
+             */
             Collections.sort(qds);
+            /**
+             *
+             * 我们知道在NameServer的路由信息中一个Topic 有几个brokerName，就会有几个QueueData，每一个QueueData会存储这个BrokerName中的所有brokerId，
+             *
+             * 生产者通过向nameServer查询topic的 路由信息，对返回的结果进行处理，在返回的结果中 会重点分析每一个QueueData; QueueData
+             * 中的writeQueueNums表示写队列的个数，实际上就是对应着该BrokerName中的master Broker节点上的该topic的写队列的个数。
+             * 此时对于生产者来说他关系的是每一个QueueData中的writeQueueNums， 也就是关心每一个BrokerName下的 master Broker节点上
+             * 的该topic的写队列的个数，然后为每一个写队列创建一个MessageQueue对象，最终Producer发送消息的时候会选择一个MessageQueue，将消息发送到该MessageQueue中。
+             *
+             */
             for (QueueData qd : qds) {
+                /**
+                 * 如果该BrokerName存在写权限
+                 */
                 if (PermName.isWriteable(qd.getPerm())) {
                     BrokerData brokerData = null;
+                    /**
+                     * 根据brokername找到该Brokername的的BrokerData，brokerData中存储了该BrokerName中的broker节点的主从结构
+                     */
                     for (BrokerData bd : route.getBrokerDatas()) {
                         if (bd.getBrokerName().equals(qd.getBrokerName())) {
                             brokerData = bd;
@@ -189,10 +254,27 @@ public class MQClientInstance {
                         continue;
                     }
 
+                    /**
+                     * 如果在改brokerName的 broker节点中 没有master节点则返回
+                     */
                     if (!brokerData.getBrokerAddrs().containsKey(MixAll.MASTER_ID)) {
                         continue;
                     }
-
+                    /**
+                     * 获取该BrokerName中 写队列的数量，然后创建多个MessageQueue，
+                     *
+                     * 那么也就是说 假设topic有两个BrokerName：A和B
+                     * A对应一个QueueData，同时A中有两个broker节点主从。  Queuedata中写队列个数为3
+                     * B对应一个QueueData，同时B中有三个broker节点主从。  Queuedata中写队列个数为4
+                     * 那么这个Topic的写队列的个数就是7 ，也就是有了7个MessageQueue
+                     *
+                     *从这里我们可以看到 实际上MmessageQueue 实际上对应着 整个Topic中可以写队列的数量。
+                     * 生产者发送小的时候必然是向 有权限写的队列中写入数据。
+                     *
+                     * 因此Producer通过org.apache.rocketmq.client.impl.producer.DefaultMQProducerImpl#fetchPublishMessageQueues(java.lang.String)
+                     * 方法 获取Topic的publisInfo，在这个PublisInfo中就包含该topic的MessageQueue
+                     * 这个MessageQueue就是可以写的队列
+                     */
                     for (int i = 0; i < qd.getWriteQueueNums(); i++) {
                         MessageQueue mq = new MessageQueue(topic, qd.getBrokerName(), i);
                         info.getMessageQueueList().add(mq);
@@ -207,9 +289,18 @@ public class MQClientInstance {
     }
 
     public static Set<MessageQueue> topicRouteData2TopicSubscribeInfo(final String topic, final TopicRouteData route) {
+        /**
+         * 提取Topic信息中的可写队列的数量，封装起来交给Consumer，consumer关心的是可读队列
+         */
         Set<MessageQueue> mqList = new HashSet<MessageQueue>();
+        /**
+         * 关于QueueData，一个BrokerName对应一个QueueData
+         */
         List<QueueData> qds = route.getQueueDatas();
         for (QueueData qd : qds) {
+            /**
+             * QueueData具有读权限的是时候获取其可读队列的数量，然后为每一个对垒创建一个MessageQueue
+             */
             if (PermName.isReadable(qd.getPerm())) {
                 for (int i = 0; i < qd.getReadQueueNums(); i++) {
                     MessageQueue mq = new MessageQueue(topic, qd.getBrokerName(), i);
@@ -221,25 +312,92 @@ public class MQClientInstance {
         return mqList;
     }
 
+    /**
+     *
+     * @throws MQClientException
+     */
     public void start() throws MQClientException {
 
         synchronized (this) {
             switch (this.serviceState) {
                 case CREATE_JUST:
+                    /**
+                     * 仅仅创建不启动
+                     */
                     this.serviceState = ServiceState.START_FAILED;
                     // If not specified,looking address from name server
                     if (null == this.clientConfig.getNamesrvAddr()) {
                         this.mQClientAPIImpl.fetchNameServerAddr();
                     }
                     // Start request-response channel
+                    /**
+                     * 创建Netty Client
+                     */
                     this.mQClientAPIImpl.start();
+                    /**
+                     * 启动定时任务 fetchNameServerAddr
+                     */
                     // Start various schedule tasks
                     this.startScheduledTask();
                     // Start pull service
+                    /**
+                     * pullMessageService 继承自ServiceThread 类型为Runnable，这里调用了他的start方法
+                     *
+                     * ServiceThread内部有一个属性 Thread thread;， 在start方法内会调用thread.start，从而启动了一个线程
+                     * 在PullMessageService的run方法中会执行：
+                     *  PullRequest pullRequest = this.pullRequestQueue.take();
+                     *  this.pullMessage(pullRequest);
+                     *
+                     *
+                     *  不管是PullConsumer还是PushConsumer  都会使用MQClientInstance， MQClientInstance启动的时候会启动PullMessageService
+                     *
+                     * 也就是说即便你使用的是PushConsumer，那么PushConsumer启动的时候导致MQClientInstance 也start 从而也会启动PullMessageService
+                     *
+                     */
                     this.pullMessageService.start();
                     // Start rebalance service
+                    /**
+                     * 这里会启动一个线程执行 RebalanceService的run，在run方法中
+                     * 会执行doRebalance，在rebalance中会遍历 MQClientInstance的所有consumer，
+                     * 然后针对每一个consumer调用 consumer.doRebalance();
+                     *
+                     * 不同的consumer ,PullConsumer 和PushConsumer 有不同的doRebalance实现，但他们最终都是调用了rebalanceImpl的doRebalance
+                     *
+                     * RebalanceImpl.rebalanceByTopic(String, boolean)(2 usages)  (org.apache.rocketmq.client.impl.consumer)
+                     *     RebalanceImpl.doRebalance(boolean)  (org.apache.rocketmq.client.impl.consumer)
+                     *         DefaultMQPullConsumerImpl.doRebalance()  (org.apache.rocketmq.client.impl.consumer)
+                     *         DefaultMQPushConsumerImpl.doRebalance()  (org.apache.rocketmq.client.impl.consumer)
+                     *             DefaultMQPushConsumerImpl.resume()  (org.apache.rocketmq.client.impl.consumer)
+                     *                 DefaultMQPushConsumer.resume()  (org.apache.rocketmq.client.consumer)
+                     *                     PushConsumerImpl.resume()  (io.openmessaging.rocketmq.consumer)
+                     *                 MQClientInstance.resetOffset(String, String, Map<MessageQueue, Long>)  (org.apache.rocketmq.client.impl.factory)
+                     *                     DefaultMQPushConsumerImpl.resetOffsetByTimeStamp(long)  (org.apache.rocketmq.client.impl.consumer)
+                     *                     ClientRemotingProcessor.resetOffset(ChannelHandlerContext, RemotingCommand)  (org.apache.rocketmq.client.impl)
+                     *                         ClientRemotingProcessor.processRequest(ChannelHandlerContext, RemotingCommand)  (org.apache.rocketmq.client.impl)
+                     *
+                     *
+                     *    /**
+                     *      * PullMessageService 在启动时由于pullRequestQueue中没有PullRequest对象，故PullMessageService线程将会阻塞。
+                     *      * 问题1：PullRequest对象在什么时候创建并加入到PullRequestQueue中一以便唤醒PullMessageService线程？
+                     *      *
+                     *      * 问题2： 集群内多个消费者是如何负载主题下的多个消费队列，如果有新的消费者加入时，消息队列又会如何重新分布？
+                     *      *
+                     *      * RocketMQ消息队列重新分布是由RebalanceService线程来实现的，一个MQClientInstance持有一个RebalanceService实现，并且伴随着MQClientInstance的启动而启动
+                     *
+                     *
+                     */
                     this.rebalanceService.start();
                     // Start push service
+                    /**
+                     * Start push service
+                     *
+                     * 我们知道Producer和Consumner的启动start方法都会调用到MQClientInstance的start方法，但是MQClientInstance 本身有一个状态属性serviceState
+                     *实际上 MQClientInstance的start方法的逻辑只会执行一次。 而且MQClientInstance 对象内部存在一个defaultMQProducer属性，这个属性时MQClient内置的producer
+                     * 为了支持MQClient内部的某写功能而自动创建了一个Producer。
+                     *
+                     *
+                     *
+                     */
                     this.defaultMQProducer.getDefaultMQProducerImpl().start(false);
                     log.info("the client factory [{}] start OK", this.clientId);
                     this.serviceState = ServiceState.RUNNING;
@@ -253,6 +411,9 @@ public class MQClientInstance {
     }
 
     private void startScheduledTask() {
+        /**
+         * 第一个定时任务，fetchNameServer
+         */
         if (null == this.clientConfig.getNamesrvAddr()) {
             this.scheduledExecutorService.scheduleAtFixedRate(new Runnable() {
 
@@ -267,6 +428,29 @@ public class MQClientInstance {
             }, 1000 * 10, 1000 * 60 * 2, TimeUnit.MILLISECONDS);
         }
 
+        /**
+         * 第二个定时任务
+         *
+         * 非常重要的任务：
+         *  RocketMQ的路由发现是非实时的，当Topic路由出现变化后，nameServer不主动推送给客户端，
+         *  而是由客户端定时拉取最新的路由。（注意是定时拉取最新的路由，也就是consumer和Producer存在定时任务）
+         *
+         *
+         * MQClient 端启动定时任务 更新topic的路由信息。 具体更新哪些路由 会从consumerTable ，producerTable中遍历每一个consumer
+         * producer，取出其中的topic，然后更新每一个topic的路由信息
+         *
+         * MQClientInstance.updateTopicRouteInfoFromNameServer(String, boolean, DefaultMQProducer)  (org.apache.rocketmq.client.impl.factory)
+         *     MQClientInstance.updateTopicRouteInfoFromNameServer(String)  (org.apache.rocketmq.client.impl.factory)
+         *         MQClientInstance.updateTopicRouteInfoFromNameServer()  (org.apache.rocketmq.client.impl.factory)
+         *       这一步     Anonymous in startScheduledTask() in MQClientInstance.run()  (org.apache.rocketmq.client.impl.factory)
+         *                 MQClientInstance.start()  (org.apache.rocketmq.client.impl.factory)
+         *                     DefaultMQPushConsumerImpl.start()  (org.apache.rocketmq.client.impl.consumer)
+         *                         DefaultMQPushConsumer.start()  (org.apache.rocketmq.client.consumer)
+         *                     DefaultMQPullConsumerImpl.start()  (org.apache.rocketmq.client.impl.consumer)
+         *                     DefaultMQProducerImpl.start(boolean)  (org.apache.rocketmq.client.impl.producer)
+         *
+         * 这里的定时任务会调用 MQClientInstance的updateTopicRouteInfoFromNameServer
+         */
         this.scheduledExecutorService.scheduleAtFixedRate(new Runnable() {
 
             @Override
@@ -279,11 +463,18 @@ public class MQClientInstance {
             }
         }, 10, this.clientConfig.getPollNameServerInterval(), TimeUnit.MILLISECONDS);
 
+        /**
+         * 第三个定时任务
+         *
+         */
         this.scheduledExecutorService.scheduleAtFixedRate(new Runnable() {
 
             @Override
             public void run() {
                 try {
+                    /**
+                     * 清除不在线的broker
+                     */
                     MQClientInstance.this.cleanOfflineBroker();
                     MQClientInstance.this.sendHeartbeatToAllBrokerWithLock();
                 } catch (Exception e) {
@@ -292,6 +483,10 @@ public class MQClientInstance {
             }
         }, 1000, this.clientConfig.getHeartbeatBrokerInterval(), TimeUnit.MILLISECONDS);
 
+        /**
+         * 第四个定时任务，持久化consumerOffset
+         *
+         */
         this.scheduledExecutorService.scheduleAtFixedRate(new Runnable() {
 
             @Override
@@ -323,6 +518,15 @@ public class MQClientInstance {
 
     public void updateTopicRouteInfoFromNameServer() {
         Set<String> topicList = new HashSet<String>();
+        /**
+         * 收集topic和producer的所有topic
+         * 对于新创建的Producer 会在这个方法 org.apache.rocketmq.client.impl.factory.MQClientInstance#registerProducer(java.lang.String, org.apache.rocketmq.client.impl.producer.DefaultMQProducerImpl) 中
+         * 放置到producerTable 这个map中
+         *
+         * 对于新创建的Producer 在 start的时候 org.apache.rocketmq.client.impl.producer.DefaultMQProducerImpl#start(boolean) 会调用registerProducer，在register的时候会放置到producerTable
+         *
+         *
+         */
 
         // Consumer
         {
@@ -331,6 +535,10 @@ public class MQClientInstance {
                 Entry<String, MQConsumerInner> entry = it.next();
                 MQConsumerInner impl = entry.getValue();
                 if (impl != null) {
+                    /**
+                     *获取这个Consumer的订阅信息
+                     *
+                     */
                     Set<SubscriptionData> subList = impl.subscriptions();
                     if (subList != null) {
                         for (SubscriptionData subData : subList) {
@@ -354,7 +562,13 @@ public class MQClientInstance {
             }
         }
 
+        /**
+         * 以上是收集所有的topic
+         */
         for (String topic : topicList) {
+            /**
+             * 更新每一个topic，获取topic的路由信心更新到consumer和producer中
+             */
             this.updateTopicRouteInfoFromNameServer(topic);
         }
     }
@@ -388,6 +602,10 @@ public class MQClientInstance {
                 try {
                     ConcurrentHashMap<String, HashMap<Long, String>> updatedTable = new ConcurrentHashMap<String, HashMap<Long, String>>();
 
+                    /**
+                     * 首先我们这里遍历的是brokerAddrTable，  如何判断一个Broker是否在线是根据当 MQClientInstance对象中的路由信息 topicRouteTable
+                     * 来决定的，因为这个路由信息会定期从nameServer更新。
+                     */
                     Iterator<Entry<String, HashMap<Long, String>>> itBrokerTable = this.brokerAddrTable.entrySet().iterator();
                     while (itBrokerTable.hasNext()) {
                         Entry<String, HashMap<Long, String>> entry = itBrokerTable.next();
@@ -401,6 +619,9 @@ public class MQClientInstance {
                         while (it.hasNext()) {
                             Entry<Long, String> ee = it.next();
                             String addr = ee.getValue();
+                            /**
+                             * 使用MQClientInstance的路由信息topicRouteTable 判断这个broker是否在线
+                             */
                             if (!this.isBrokerAddrExistInTopicRouteTable(addr)) {
                                 it.remove();
                                 log.info("the broker addr[{} {}] is offline, remove it", brokerName, addr);
@@ -484,6 +705,10 @@ public class MQClientInstance {
         while (it.hasNext()) {
             Entry<String, MQConsumerInner> entry = it.next();
             MQConsumerInner impl = entry.getValue();
+            /**
+             * 遍历所有的consumer然后调用consumer的持久化方法
+             *
+             */
             impl.persistConsumerOffset();
         }
     }
@@ -527,7 +752,15 @@ public class MQClientInstance {
         return false;
     }
 
+    /**
+     * 向Broker发送心跳
+     *
+     */
     private void sendHeartbeatToAllBroker() {
+        /**
+         * 心跳信息中包含当前JVM内所有Consumer和Producer的数据
+         *
+         */
         final HeartbeatData heartbeatData = this.prepareHeartbeatData();
         final boolean producerEmpty = heartbeatData.getProducerDataSet().isEmpty();
         final boolean consumerEmpty = heartbeatData.getConsumerDataSet().isEmpty();
@@ -549,6 +782,9 @@ public class MQClientInstance {
                         String addr = entry1.getValue();
                         if (addr != null) {
                             if (consumerEmpty) {
+                                /**
+                                 * 如果消费者为空，且id不是masterId，则不需要发送心跳。
+                                 */
                                 if (id != MixAll.MASTER_ID)
                                     continue;
                             }
@@ -608,20 +844,64 @@ public class MQClientInstance {
             if (this.lockNamesrv.tryLock(LOCK_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)) {
                 try {
                     TopicRouteData topicRouteData;
+                    /**
+                     * isDefault参数表示是否是默认的 producer，如果isDefault为true，且defaultMQProducer不为空
+                     *
+                     * ：如果 isDefault 为 true ，则使用 默认主题去查询，如果查询到路由信息，则 替
+                     * 换路由信息中读写队列个数为消息生产者默认的队列个数（defaultTopicQueueNums ）；如果
+                     * isDefault 为 false ，则使用参数 topic 去查询；如果未查询到路由信息，则返回 false ，表示
+                     * 路由信息未变化。
+                     *
+                     */
                     if (isDefault && defaultMQProducer != null) {
+                        /**
+                         * 如果isDefault为true，则会执行getDefaultTopicRouteInfoFromNameServer。 否则将会执行getTopicRouteInfoFromNameServer
+                         * 从这里我们可以看到isDefaut为true，则会执行很多default操作。
+                         *
+                         * 注意这里 getDefaultTopic的时候 我们传入的topic key是defaultMQProducer.getCreateTopicKey()，这个返回值是 org.apache.rocketmq.common.topic.TopicValidator#AUTO_CREATE_TOPIC_KEY_TOPIC
+                         *
+                         *  注意这里  不是向nameServer查询 方法参数中的topic，而是查询了defaultMQProducer的 createTopicKey
+                         *
+                         *   第一次发送消息时，本地没有缓存 topic 的路由信息，查询 NameServer 尝试获取，如果路由信息未找到，再次尝试用默认主题 DefaultMQProducerlmpl#createTopicKey 去查询，
+                         *              * 如果 BrokerConfig#autoCreateTopicEnable 为 true 时， NameServer 将返回路由信息，如果
+                         *              * autoCreateTopicEnab l e 为 false 将抛出无法找到 topic 路由异常。
+                         *
+                         */
                         topicRouteData = this.mQClientAPIImpl.getDefaultTopicRouteInfoFromNameServer(defaultMQProducer.getCreateTopicKey(),
                             1000 * 3);
                         if (topicRouteData != null) {
                             for (QueueData data : topicRouteData.getQueueDatas()) {
                                 int queueNums = Math.min(defaultMQProducer.getDefaultTopicQueueNums(), data.getReadQueueNums());
+                                /**
+                                 * 如果 isD 巳fault 为 true ，则使用 默认主题去查询，如果查询到路由信息，则 替
+                                 * 换路由信息中读写队列个数为消息生产者默认的队列个数（defaultTopicQueueNums ）
+                                 */
                                 data.setReadQueueNums(queueNums);
                                 data.setWriteQueueNums(queueNums);
                             }
                         }
                     } else {
+                        /**
+                         * 当isDefault为false的情况下将会执行这里的逻辑
+                         * 从getTopicRouteInfoFromNameServer方法我们看到，如果nameServer返回的 topicRouteInfo为null 则getTopicRouteInfoFromNameServer
+                         * 方法直接会抛出异常。 但是 该方法最外层有一个try catch，因此当topic不存在的时候尽管会抛出异常的，但是外部会捕获
+                         */
                         topicRouteData = this.mQClientAPIImpl.getTopicRouteInfoFromNameServer(topic, 1000 * 3);
                     }
+
+                    /**
+                     * 从上面的内容我们知道变量 topicRouteData有两种情况：
+                     * （1）isDefault为false，执行 从nameServer查询指定的topic， 如果nameServer不知道该topic，则会返回TOPIC_NOT_EXIST。
+                     * （2） isDefault为true，且defaultMQProducer不为null， 则会向nameServer 查询 topic AUTO_CREATE_TOPIC_KEY_TOPIC的路由信息
+                     *
+                     */
                     if (topicRouteData != null) {
+                        /**
+                         * 如果topicRouteTable 中没有topic的信息， 则old为null，
+                         * 这个时候topicRouteData 变量就是defaultMQProducer的auto_create_key_topic的路由信息。
+                         *
+                         * 然后topicRouteDataIsChange 会返回true
+                         */
                         TopicRouteData old = this.topicRouteTable.get(topic);
                         boolean changed = topicRouteDataIsChange(old, topicRouteData);
                         if (!changed) {
@@ -630,22 +910,66 @@ public class MQClientInstance {
                             log.info("the topic[{}] route info changed, old[{}] ,new[{}]", topic, old, topicRouteData);
                         }
 
+                        /**
+                         * changed为true 则clone 路由信息
+                         * （1）比如 topic没有创建过。此时 Produer发送消息的时候来查询Topic的路由信息，显然根据topic到NameServer中查询会返回topic不存在
+                         * 然后我们就会使用默认的defaultMQProducer的auto_create_key 这个topic的路由信息，然后将这个路由信息clone一份作为新的topic的路由信息
+                         *
+                         */
                         if (changed) {
+                            /**
+                             * 克隆一份作为 topic的路由信息
+                             */
                             TopicRouteData cloneTopicRouteData = topicRouteData.cloneTopicRouteData();
 
+                            /**
+                             * 遍历该Topic的 BrokerName 中的Broker主从节点的地址信息
+                             */
                             for (BrokerData bd : topicRouteData.getBrokerDatas()) {
+                                /**
+                                 * <brokerNameA,(masterIp,broker2ip,broker3Ip   )>
+                                 *
+                                 * 将Broker的地址更新到brokerAddrTable
+                                 */
                                 this.brokerAddrTable.put(bd.getBrokerName(), bd.getBrokerAddrs());
                             }
 
-                            // Update Pub info
+                            // Update Pub info ：更新 MQClientlnstance Broker 地址缓存表。
                             {
+                                /**
+                                 * 将TopicRouteData转为TopicPublishInfo。
+                                 *
+                                 *  注意在上面通过和NameServer进行交互我们得到了Topic的信息数据TopicRouteData，在这个TopicRouteData中 包含了这个topic内有几个BrokerName
+                                 *  每一个BrokerName内有几个读队列，有几个写队列。
+                                 *
+                                 *  对于生产者Producer而言，他关心的是整个Topic内有几个写队列，因为生产者的消息要写入到消息队列中。 对于消费者而言他关心的是有几个读队列。
+                                 *
+                                 *  因此下面topicRouteData2TopicPublishInfo 方法分析topicRouteData 中写队列的数量，为每一个写队列创建一个MessageQueue对象，放置到TopicPublisInfo中，
+                                 *  然后将这个TopicPublisInfo   通过producer的updateTopicPublishInfo方法放置到每一个Producer的topicPublishInfoTable 属性中。
+                                 *
+                                 *  下面topicRouteData2TopicSubscribeInfo 方法会分析topicRoutedata 中 读队列的信息，并为每一个读队列创建一个MessageQueue对象，然后将读队列
+                                 *  信息通过Consumer的updateTopicSubscribeInfo方法更新到每一个Consumer的topicSubscribeInfoTable 属性中。 这样就完成了将topic信息告知Producer和Consumer。
+                                 *
+                                 *
+                                 * ：根据 topicRouteData 中的 List<QueueData> 转换成问icPublis凶曲的 List<MessageQueue>列表。 然后会更新该 MQC!ientfustan臼所管辖的所
+                                 * 有消息发送关于 topic 的路由信息。
+                                 */
                                 TopicPublishInfo publishInfo = topicRouteData2TopicPublishInfo(topic, topicRouteData);
                                 publishInfo.setHaveTopicRouterInfo(true);
+                                /**
+                                 * 将这个路由信息 放置到每一个Producer中
+                                 *
+                                 * 注意这里遍历的是MQClientInstance的producerTable ，因此不同的MQClientInstance 的producerTable是隔离的
+                                 */
                                 Iterator<Entry<String, MQProducerInner>> it = this.producerTable.entrySet().iterator();
                                 while (it.hasNext()) {
                                     Entry<String, MQProducerInner> entry = it.next();
                                     MQProducerInner impl = entry.getValue();
                                     if (impl != null) {
+
+                                        /**
+                                         * 将路由信息放置到每一个Producer中。
+                                         */
                                         impl.updateTopicPublishInfo(topic, publishInfo);
                                     }
                                 }
@@ -653,17 +977,35 @@ public class MQClientInstance {
 
                             // Update sub info
                             {
+                                /**
+                                 * 将这个路由信息放置到每一个Consumer中
+                                 * 注意这里遍历的是MQClientInstance的producerTable ，因此不同的MQClientInstance 的producerTable是隔离的
+                                 *
+                                 */
                                 Set<MessageQueue> subscribeInfo = topicRouteData2TopicSubscribeInfo(topic, topicRouteData);
                                 Iterator<Entry<String, MQConsumerInner>> it = this.consumerTable.entrySet().iterator();
                                 while (it.hasNext()) {
                                     Entry<String, MQConsumerInner> entry = it.next();
                                     MQConsumerInner impl = entry.getValue();
                                     if (impl != null) {
+                                        /**
+                                         *  Consumer和Producer启动的时候会执行MQClientInstance.start() ，然后 MQClientInstance的start中启动了一个定时任务startScheduledTask
+                                         *  这个定时任务会执行 updateTopicRouteInfoFromNameServer 最终会执行到该方法 updateTopicRouteInfoFromNameServer
+                                         *
+                                         *  针对 consumer如何做更新路由信息呢？ 如下调用了updateTopicSubscribeInfo
+                                         *
+                                         *
+                                         */
                                         impl.updateTopicSubscribeInfo(topic, subscribeInfo);
                                     }
                                 }
                             }
                             log.info("topicRouteTable.put. Topic = {}, TopicRouteData[{}]", topic, cloneTopicRouteData);
+                            /**
+                             * 将路由信息放置到 当前对象的MQClientInstance的路由信息中。
+                             *
+                             *  关于MQClientInstance的唯一性： 是否一个JVM进程内只有一个MQClientInstance呢？
+                             */
                             this.topicRouteTable.put(topic, cloneTopicRouteData);
                             return true;
                         }
@@ -932,6 +1274,11 @@ public class MQClientInstance {
             return false;
         }
 
+        /**
+         *  一个JVM内针对一个ProducerGroup只能有一个Producer，如果再创建Producer则会提示
+         * Caused by: org.apache.rocketmq.client.exception.MQClientException: The producer group[28751_UpgradeTenantPaasMetaDataGroup] has been created before, specify another name please.
+         * See http://rocketmq.apache.org/docs/faq/ for further details.
+         */
         MQProducerInner prev = this.producerTable.putIfAbsent(group, producer);
         if (prev != null) {
             log.warn("the producer group[{}] exist already.", group);
@@ -973,6 +1320,10 @@ public class MQClientInstance {
             MQConsumerInner impl = entry.getValue();
             if (impl != null) {
                 try {
+                    /**
+                     * 遍历已注册的消费者，对消费者执行doRebalance方法
+                     *
+                     */
                     impl.doRebalance();
                 } catch (Throwable e) {
                     log.error("doRebalance exception", e);
@@ -1074,6 +1425,9 @@ public class MQClientInstance {
     }
 
     public List<String> findConsumerIdList(final String topic, final String group) {
+        /**
+         * 随机选择一个broker地址
+         */
         String brokerAddr = this.findBrokerAddrByTopic(topic);
         if (null == brokerAddr) {
             this.updateTopicRouteInfoFromNameServer(topic);
@@ -1082,6 +1436,9 @@ public class MQClientInstance {
 
         if (null != brokerAddr) {
             try {
+                /**
+                 * 从broker地址 对应的broker查询 ConsumerGroup中的consumer列表
+                 */
                 return this.mQClientAPIImpl.getConsumerIdListByGroup(brokerAddr, group, 3000);
             } catch (Exception e) {
                 log.warn("getConsumerIdListByGroup exception, " + brokerAddr + " " + group, e);
@@ -1092,6 +1449,10 @@ public class MQClientInstance {
     }
 
     public String findBrokerAddrByTopic(final String topic) {
+        /**
+         * 找到topic的路由信息， 随机全出一个BrokerData（也就是一个Brokername）,
+         * 从被选中的BrokerName（该Brokername内存在多个Broker节点构成主从结构）中随机选择一个Broker节点返回其地址
+         */
         TopicRouteData topicRouteData = this.topicRouteTable.get(topic);
         if (topicRouteData != null) {
             List<BrokerData> brokers = topicRouteData.getBrokerDatas();

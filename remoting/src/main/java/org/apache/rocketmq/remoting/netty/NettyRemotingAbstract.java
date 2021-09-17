@@ -404,6 +404,25 @@ public abstract class NettyRemotingAbstract {
         }
     }
 
+    /**
+     * 同步阻塞的实现原理是： 首先为请求创建一个唯一id 和一个表示请求响应的对象ResponseFeature，然后将这两个对象作为key ,value
+     * 存储到一个Map中，这个map（responseTable）其实就是表示等待的响应表。然后调用Net通用的io.netty.channel.Channel#writeAndFlush(java.lang.Object)
+     * 方法将请求发送出去，这个writeAndFlush方法不会阻塞等待响应，同时在发送的 时候给这个channle注册了一个Listener，
+     * 在消息发送成功或者消息发送失败的时候都会回调Listener的方法，在Listener内判断如果发送失败则调用countDownLatch.countDown();
+     * 从而唤醒发送消息的线程。。因为writeAndFlus不会阻塞当前线程，所以当前线程write之后继续执行，
+     * 在ResponseFeature对象中有一个countDownLatch属性（new CountDownLatch(1);），write之后我们会
+     * 调用countDownLatch.await(timeoutMillis, TimeUnit.MILLISECONDS); 从而实现当前发送消息线程的 限时阻塞。
+     *
+     * 同时RocketMQ中提供了Handler用于处理接收到的消息，在接收到响应的时候会首先提取响应中的请求id，然后在responseTable取出ResponseFeature，
+     * 同时调用countDownLatch.countDown(); 从而唤醒发送消息的线程
+     * @param channel
+     * @param request
+     * @param timeoutMillis
+     * @return
+     * @throws InterruptedException
+     * @throws RemotingSendRequestException
+     * @throws RemotingTimeoutException
+     */
     public RemotingCommand invokeSyncImpl(final Channel channel, final RemotingCommand request,
         final long timeoutMillis)
         throws InterruptedException, RemotingSendRequestException, RemotingTimeoutException {
@@ -429,6 +448,12 @@ public abstract class NettyRemotingAbstract {
                     log.warn("send a request command to channel <" + addr + "> failed.");
                 }
             });
+            /**
+             *
+             // 注意这个waitResponse方法是ResponseFuture对象中的方法，在waitResponse方法内 会调用countDownLatch await阻塞当前发送线程。
+             //同时 ResponseFuture对象的 responseCommand属性 会在 netty接收到响应的时候在netty线程中 将响应中的数据更新到属性responseCommand中
+             //所以ResponseFuture中的responseCommand属性存在多线程并发共享，需要使用volatile
+             */
 
             RemotingCommand responseCommand = responseFuture.waitResponse(timeoutMillis);
             if (null == responseCommand) {

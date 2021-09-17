@@ -784,6 +784,13 @@ public class CommitLog {
 
     }
 
+    /**
+     * ，这里
+     * 想再重点突 出 一个机制，消息重试机制依托于定时任务实现，
+     *
+     * @param msg
+     * @return
+     */
     public PutMessageResult putMessage(final MessageExtBrokerInner msg) {
         // Set the storage time
         msg.setStoreTimestamp(System.currentTimeMillis());
@@ -802,6 +809,19 @@ public class CommitLog {
         if (tranType == MessageSysFlag.TRANSACTION_NOT_TYPE
             || tranType == MessageSysFlag.TRANSACTION_COMMIT_TYPE) {
             // Delay Delivery
+            /**
+             * 在存入 Commitlog 文 件之前，如果消息的延迟级别 delayTim 巳Level 大于 0 ， 替 换消息的主题与队列为定时任务主题“ SCHEDULE TOPIC  XXXX ”，队列 ID 为延迟级别减
+             * 1 。 再次将消息主题、队列存入消息的属性中，键分别为 ： PROPERTY REAL  TOPIC 、
+             * PROPERTY _REAL  QUEUE_ID 。
+             *
+             * ACK 消息存入 CommitLog 文件后 ，将依托 RocketMQ 定时消息机制在延迟时间到期
+             * 后再次将消息拉取，提交消费线程池，
+             *
+             * ===================
+             * 如果消息 的延迟级别大于 0 ，将消息的原主题名称与原消息队列 ID 存入消息属
+             * 性中，用延迟消息主题 SCHEDULE TOPIC 、消 息队列 ID 更新原先消息的主题与队列 ， 这
+             * 是并发消息消费重试关键的一步，
+             */
             if (msg.getDelayTimeLevel() > 0) {
                 if (msg.getDelayTimeLevel() > this.defaultMessageStore.getScheduleMessageService().getMaxDelayLevel()) {
                     msg.setDelayTimeLevel(this.defaultMessageStore.getScheduleMessageService().getMaxDelayLevel());
@@ -833,8 +853,20 @@ public class CommitLog {
         long elapsedTimeInLock = 0;
 
         MappedFile unlockMappedFile = null;
+        /**
+         * 获取当前可以写入的 Commitlog 文件，
+         * Commitlog 文件存储 目 录为$｛ ROCKET_HOME }/ store/ commitlog 目 录，每一个文件默
+         * 认 lG ， 一个文件写满后再创建另外一个，以该文件中第一个偏移量为文件名，偏移量小于
+         * 20 位用 0 补齐
+         * MappedFileQueue 可以 看 作 是$｛ ROCKET_HOME }/store/commitlog 文件夹，而
+         * MappedFile 则对应该文件夹下一个个的文件 。
+         */
         MappedFile mappedFile = this.mappedFileQueue.getLastMappedFile();
 
+        /**
+         * ：在写入 CornrnitLog 之前，先申请 putMessageLock ，也就是将消息存储到
+         * CornrnitLog 文件中是串行的 。
+         */
         putMessageLock.lock(); //spin or ReentrantLock ,depending on store config
         try {
             long beginLockTimestamp = this.defaultMessageStore.getSystemClock().now();
@@ -844,6 +876,12 @@ public class CommitLog {
             // global
             msg.setStoreTimestamp(beginLockTimestamp);
 
+            /**
+             * 设置消息的存储时间，如果 rnappedFile 为空，表明$ {ROCKET_HOME}/store/
+             * cornrnitlog 目录下不存在任何文件，说明本次消息是第一次消息发送，用偏移量 0 创建第
+             * 一个 commit 文件，文件为 00000000000000000000 ，如果文件创建失败，抛出 CREATE
+             * MAPEDFILE  FAILED ，很有可能是磁盘空 间不足或权限不够。
+             */
             if (null == mappedFile || mappedFile.isFull()) {
                 mappedFile = this.mappedFileQueue.getLastMappedFile(0); // Mark: NewFile may be cause noise
             }
@@ -853,6 +891,12 @@ public class CommitLog {
                 return new PutMessageResult(PutMessageStatus.CREATE_MAPEDFILE_FAILED, null);
             }
 
+            /**
+             * ：将消息追加到 MappedFile 中 。 首先先获取 MappedFile 当前写指针，如果
+             * currentPos 大于或等于文件大小则表 明文件已写满，抛出 AppendMessageStatus. UNKNOWN_
+             * ERROR。 如果 currentPos 小于文件大小，通过 slice （）方法创建一个与 MappedFile 的共享 内
+             * 存区，并设置 position 为当前指针 。
+             */
             result = mappedFile.appendMessage(msg, this.appendMessageCallback);
             switch (result.getStatus()) {
                 case PUT_OK:
@@ -1534,6 +1578,12 @@ public class CommitLog {
 
             this.resetByteBuffer(storeHostHolder, storeHostLength);
             String msgId;
+            /**
+             * ：创建全局唯一消息 ID ，消息 ID 有 16 字节，但为了消息 ID 可读性，返回给应用程序的 msgld 为字符类型，可以通过 UtilAll.
+             * bytes2string 方法将 msgld 字节数组转换成字符串，通过 Uti1All .stri ng2bytes 方法将 msgld
+             * 字符串还原成 16 个字节的字节数组，从而根据提取消息偏移量 ，可以快速通过 msgld 找到
+             * 消息内容 。
+             */
             if ((sysflag & MessageSysFlag.STOREHOSTADDRESS_V6_FLAG) == 0) {
                 msgId = MessageDecoder.createMessageId(this.msgIdMemory, msgInner.getStoreHostBytes(storeHostHolder), wroteOffset);
             } else {
@@ -1546,6 +1596,10 @@ public class CommitLog {
             keyBuilder.append('-');
             keyBuilder.append(msgInner.getQueueId());
             String key = keyBuilder.toString();
+            /**
+             *  获取该消息在消息 队列的偏移量。 CommitLog 中保存了当前所有消息队列的当
+             * 前待写入偏移量。
+             */
             Long queueOffset = CommitLog.this.topicQueueTable.get(key);
             if (null == queueOffset) {
                 queueOffset = 0L;
@@ -1585,6 +1639,10 @@ public class CommitLog {
 
             final int bodyLength = msgInner.getBody() == null ? 0 : msgInner.getBody().length;
 
+            /**
+             *  根据消息、体的长度 、 主题的长度、属性的长度结合消息存储格式计算消息的总
+             * 长度
+             */
             final int msgLen = calMsgLength(msgInner.getSysFlag(), bodyLength, topicLength, propertiesLength);
 
             // Exceeds the maximum message
@@ -1594,6 +1652,13 @@ public class CommitLog {
                 return new AppendMessageResult(AppendMessageStatus.MESSAGE_SIZE_EXCEEDED);
             }
 
+            /***
+             * ：如果消息长度＋END_FILE_ MIN_ BLANK_ LENGTH 大于 CommitLog 文件
+             * 的空闲空间，则返回 AppendMessageStatus.END _OF _ FILE,  Broker 会重新创建一个新的
+             * CommitLog 文件来存储该消息 。 从这里可以看出，每个 CommitLog 文件最少会空 闲 8 个字
+             * 节，高 4 字节存储当前文件剩余空间，低 4 字节存储魔数 ： CommitLog.BLANK MAGIC
+             * CODE 。
+             */
             // Determines whether there is sufficient free space
             if ((msgLen + END_FILE_MIN_BLANK_LENGTH) > maxBlank) {
                 this.resetByteBuffer(this.msgStoreItemMemory, maxBlank);
@@ -1604,6 +1669,14 @@ public class CommitLog {
                 // 3 The remaining space may be any value
                 // Here the length of the specially set maxBlank
                 final long beginTimeMills = CommitLog.this.defaultMessageStore.now();
+                /**
+                 * ：将消息内容存储到 ByteBuffer 中，然后创建 AppendMessageResult 。 这里只
+                 * 是将消息存储在 MappedFile 对应的内存映射 Buffer 中 ，并没有刷写到磁盘，追加 结果如
+                 *
+                 *   DefaultAppendMessageCallback#doAppend 只是将消息追加在内存中， 需要根
+                 * 据是同步刷盘还是异步刷盘方式，将内存中的数据持久化到磁盘，关于刷盘操作后面会详
+                 * 细介绍 。 然后执行 HA 主从同步复制 ，主从同步将在第 7 章详细介绍 。
+                 */
                 byteBuffer.put(this.msgStoreItemMemory.array(), 0, maxBlank);
                 return new AppendMessageResult(AppendMessageStatus.END_OF_FILE, wroteOffset, maxBlank, msgId, msgInner.getStoreTimestamp(),
                     queueOffset, CommitLog.this.defaultMessageStore.now() - beginTimeMills);

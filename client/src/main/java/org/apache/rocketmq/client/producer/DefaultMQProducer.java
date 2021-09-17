@@ -54,11 +54,38 @@ import org.apache.rocketmq.remoting.exception.RemotingException;
  *
  * <p> <strong>Thread Safety:</strong> After configuring and starting process, this class can be regarded as thread-safe
  * and used among multiple threads context. </p>
+ *
+ * 这个类是打算发送消息的应用程序的入口点。调优公开getter/setter方法的字段没有问题，但请记住，对于大多数场景，所有这些字段都应该能正常工作。
+ * 这个类聚合各种发送方法来将消息传递给代理。每一种都有利弊;在编写代码之前，您最好了解它们的优缺点。
+ * 线程安全:在配置和启动进程之后，这个类可以被认为是线程安全的，并在多个线程上下文中使用。
  */
 public class DefaultMQProducer extends ClientConfig implements MQProducer {
 
     /**
      * Wrapping internal implementations for virtually all methods presented in this class.
+     * 包装这个类中几乎所有方法的内部实现。
+     */
+    /**
+     *
+     * 在项目中 手动创建一个Producer对象如下：  DefaultMQProducer producer = new DefaultMQProducer(producerGroup);
+     *
+     *  在DefaultMQProducer的构造器中会自动创建一个DefaultMQProducerImpl，同时DefaultMQProducer 会持有一个DefaultMQProducerImpl
+     *   public DefaultMQProducer(final String producerGroup, RPCHook rpcHook) {
+     *         this.producerGroup = producerGroup;
+     *         defaultMQProducerImpl = new DefaultMQProducerImpl(this, rpcHook);
+     *     }
+     *
+     * 在创建DefaultMQProducerImpl的时候 我们会将 外部的DefaultMQProducer 传递给DefaultMQProducerImpl
+     *
+     * 因此DefaultMQProducer 和DefaultMQProducerImpl 之间存在互相引用的关系
+     *
+     * 简单来说DefaultMQProducer 更像是一个配置信息， 我们通过this.defaultMQProducer.getProducerGroup() 就可以拿到ProducerGroup
+     *
+     * DefaultMQProducer是 RocketMQ暴露给应用程序使用的。 我们应用程序中 设置producer的属性就是通过DefaultMQProducer对外暴露的接口设置的。
+     * 比如 public class DefaultMQProducer extends ClientConfig implements MQProducer 继承自ClientConfig接口，对外暴露属性设置。同时实现了
+     * MQProducer接口，对外包里Producer的能力，但是其能力实际是委托给DefaultMQProducer内部的DefaultMQProducerImpl来试下你的
+     *
+     *
      */
     protected final transient DefaultMQProducerImpl defaultMQProducerImpl;
     private final InternalLogger log = ClientLogger.getLog();
@@ -69,26 +96,55 @@ public class DefaultMQProducer extends ClientConfig implements MQProducer {
      * For non-transactional messages, it does not matter as long as it's unique per process. </p>
      *
      * See {@linktourl http://rocketmq.apache.org/docs/core-concept/} for more discussion.
+     * 生产者组在概念上聚合了完全相同角色的所有生产者实例，这在涉及事务性消息时尤其重要。
+     * 对于非事务性消息，只要它在每个进程中是唯一的就可以了。见更多讨论。
+     *
+     *  生产者所属组，消息服务器在回查事务状态时会随机选择该组中任何一
+     * 个生产者发起事务回查请求 。
      */
     private String producerGroup;
 
     /**
      * Just for testing or demo program
+     *
+     *
+     配置说明：发送消息的时候，如果没有找到topic，若想自动创建该topic，需要一个key topic，这个值即是key topic的值
+
+     默认值：TBW102
+
+     这是RocketMQ设计非常晦涩的一个概念，整体的逻辑是这样的：
+
+     生产者正常的发送消息，都是需要topic预先创建好的
+     但是RocketMQ服务端是支持，发送消息的时候，如果topic不存在，在发送的同时自动创建该topic
+     支持的前提是broker 的配置打开autoCreateTopicEnable=true
+     autoCreateTopicEnable=true后，broker会创建一个TBW102的topic，这个就是我们讲的默认的key topic
+     自动构建topic（以下简称T）的过程：
+
+     Producer发送的时候如果发现该T不存在，就会向配置有Producer配置的key topic的那个broker发送消息
+     broker校验客户端的topic key是否在broker存在，且校验其权限最后一位是否是1（topic权限总共有3位，按位存储，分别是读、写、支持自动创建）
+     若权限校验通过，先在该broker把T创建，并且权限就是key topic除去最后一位的权限。
+     * 默认 topicKey
      */
     private String createTopicKey = TopicValidator.AUTO_CREATE_TOPIC_KEY_TOPIC;
 
     /**
      * Number of queues to create per default topic.
+     * 每个默认主题要创建的队列数量。
+     *
+     *  默认主题在每一个 Broker 队列数量。
      */
     private volatile int defaultTopicQueueNums = 4;
 
     /**
      * Timeout for sending messages.
+     *  发送消息默认超时时间， 默认 3s 。
+     *
      */
     private int sendMsgTimeout = 3000;
 
     /**
      * Compress message body threshold, namely, message body larger than 4k will be compressed on default.
+     *  消息体超过该值则启用压缩，默认 4K 。
      */
     private int compressMsgBodyOverHowmuch = 1024 * 4;
 
@@ -96,6 +152,13 @@ public class DefaultMQProducer extends ClientConfig implements MQProducer {
      * Maximum number of retry to perform internally before claiming sending failure in synchronous mode. </p>
      *
      * This may potentially cause message duplication which is up to application developers to resolve.
+     *
+     * 在同步模式中声明发送失败之前在内部执行的最大重试次数。这可能会导致消息重复，这要由应用程序开发人员来解决。
+     *
+     * 注意是在确定发送失败之前 尝试的次数，也就是说 当前不知道是否发送成功，然后尝试重试2两次，最终确定发送失败
+     *
+     * 同 步方式发送消息重试次数，默认为 2 ，总共执行 3 次。
+     *
      */
     private int retryTimesWhenSendFailed = 2;
 
@@ -103,11 +166,18 @@ public class DefaultMQProducer extends ClientConfig implements MQProducer {
      * Maximum number of retry to perform internally before claiming sending failure in asynchronous mode. </p>
      *
      * This may potentially cause message duplication which is up to application developers to resolve.
+     * 在异步模式中声明发送失败之前，内部执行的最大重试次数。这可能会导致消息重复，这要由应用程序开发人员来解决。
+     *
+     * 异步方式发送消息重试次数，默认为 2 。
      */
     private int retryTimesWhenSendAsyncFailed = 2;
 
     /**
      * Indicate whether to retry another broker on sending failure internally.
+     * 指示是否在内部发送失败时重试另一个代理。
+     *
+     * retry Another BrokerWhe nN otStoreO  K ：消息重试时选择另外一个 Broker 时＼ 是否不等
+     * 待存储结果就返回 ， 默认为 fa lse
      */
     private boolean retryAnotherBrokerWhenNotStoreOK = false;
 
@@ -292,7 +362,7 @@ public class DefaultMQProducer extends ClientConfig implements MQProducer {
 
     /**
      * Fetch message queues of topic <code>topic</code>, to which we may send/publish messages.
-     *
+     *获取topic topic的消息队列，我们可以向其发送/发布消息。
      * @param topic Topic to fetch.
      * @return List of message queues readily to send messages to
      * @throws MQClientException if there is any client error.
@@ -743,7 +813,7 @@ public class DefaultMQProducer extends ClientConfig implements MQProducer {
     /**
      * This method will be removed in a certain version after April 5, 2020, so please do not use this method.
      *
-     * @param key accesskey
+     * @param key accesskey ：目前未实际作用，可以与 newTopic 相同 。
      * @param newTopic topic name
      * @param queueNum topic's queue number
      * @throws MQClientException if there is any client error.
@@ -761,8 +831,8 @@ public class DefaultMQProducer extends ClientConfig implements MQProducer {
      * @param key accesskey
      * @param newTopic topic name
      * @param queueNum topic's queue number
-     * @param topicSysFlag topic system flag
-     * @throws MQClientException if there is any client error.
+     * @param topicSysFlag topic system flag 主题系统标签，默认为 0 。
+     * @throws MQClientException if there is any client  error.
      */
     @Deprecated
     @Override
@@ -942,7 +1012,6 @@ public class DefaultMQProducer extends ClientConfig implements MQProducer {
 
     /**
      * Sets an Executor to be used for executing callback methods. If the Executor is not set, {@link
-     * NettyRemotingClient#publicExecutor} will be used.
      *
      * @param callbackExecutor the instance of Executor
      */
@@ -952,7 +1021,6 @@ public class DefaultMQProducer extends ClientConfig implements MQProducer {
 
     /**
      * Sets an Executor to be used for executing asynchronous send. If the Executor is not set, {@link
-     * DefaultMQProducerImpl#defaultAsyncSenderExecutor} will be used.
      *
      * @param asyncSenderExecutor the instance of Executor
      */

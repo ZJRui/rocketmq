@@ -119,6 +119,10 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
             ConsumeMessageContext context = buildConsumeMessageContext(namespace, requestHeader, request);
             this.executeConsumeMessageHookAfter(context);
         }
+        /**
+         * 获取消 费组的订阅配置信息， 如果配置信息为空返回配置组信息不存在错误 ，
+         * 如果重试队列数量小于 l ，则直接返回成功 ， 说明该消费组不支持重试。
+         */
         SubscriptionGroupConfig subscriptionGroupConfig =
             this.brokerController.getSubscriptionGroupManager().findSubscriptionGroupConfig(requestHeader.getGroup());
         if (null == subscriptionGroupConfig) {
@@ -139,6 +143,10 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
             return CompletableFuture.completedFuture(response);
         }
 
+        /**
+         * 创建重试主题，重试主题名称 ： %RETRY%＋消费组名称，并从重试队列中随
+         * 机选择一个队列 ，并构建 TopicConfig 主题配置信息 。
+         */
         String newTopic = MixAll.getRetryTopic(requestHeader.getGroup());
         int queueIdInt = Math.abs(this.random.nextInt() % 99999999) % subscriptionGroupConfig.getRetryQueueNums();
         int topicSysFlag = 0;
@@ -161,6 +169,10 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
             response.setRemark(String.format("the topic[%s] sending message is forbidden", newTopic));
             return CompletableFuture.completedFuture(response);
         }
+        /**
+         * 根据消息物理偏移量从 commitlog 文件中 获取消息， 同时将消息的主题存入属
+         * 性中
+         */
         MessageExt msgExt = this.brokerController.getMessageStore().lookMessageByOffset(requestHeader.getOffset());
         if (null == msgExt) {
             response.setCode(ResponseCode.SYSTEM_ERROR);
@@ -176,6 +188,13 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
 
         int delayLevel = requestHeader.getDelayLevel();
 
+        /**
+         *   /**
+         *          * 设置消息重试次数， 如果消息 已 重试次数超过 maxReconsumeTimes ，再次改变
+         *          * newTopic 主题为 DLQ （” %DLQ%”），该主题的权限为只写，说明消息一旦进入到 DLQ 队
+         *          * 列中， RocketMQ 将不负责再次调度进行消费了， 需要人工干预。
+         *
+         */
         int maxReconsumeTimes = subscriptionGroupConfig.getRetryMaxTimes();
         if (request.getVersion() >= MQVersion.Version.V3_4_9.ordinal()) {
             maxReconsumeTimes = requestHeader.getMaxReconsumeTimes();
@@ -201,6 +220,12 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
             msgExt.setDelayTimeLevel(delayLevel);
         }
 
+
+        /**
+         *  根据原先的消息创建一个新的消息对象，重试消息会拥有自 己 的唯一消息 ID
+         * (  ms g ld ）并存人到 comm i tlo g 文件 中，并不会去更新原先消息 ， 而是会将原先的主题、 消息
+         * ID 存入消息的属性 中 ， 主题名 称为重试主题 ， 其他属性与原先消息保持相同 。
+         */
         MessageExtBrokerInner msgInner = new MessageExtBrokerInner();
         msgInner.setTopic(newTopic);
         msgInner.setBody(msgExt.getBody());
@@ -218,6 +243,13 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
 
         String originMsgId = MessageAccessor.getOriginMessageId(msgExt);
         MessageAccessor.setOriginMessageId(msgInner, UtilAll.isBlank(originMsgId) ? msgExt.getMsgId() : originMsgId);
+        /**
+         * ：将消息存入到 CommitLog 文件中 ,这里的MessageStore的asyncPutMessage 会调用 commitLog.putMessage(msg);，这里
+         * 想再重点突 出 一个机制，消息重试机制依托于定时任务实现，
+         *
+         * ACK 消息存入 CommitLog 文件后 ，将依托 RocketMQ 定时消息机制在延迟时间到期
+         * 后再次将消息拉取，提交消费线程池，
+         */
         CompletableFuture<PutMessageResult> putMessageResult = this.brokerController.getMessageStore().asyncPutMessage(msgInner);
         return putMessageResult.thenApply((r) -> {
             if (r != null) {
@@ -336,6 +368,10 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
                 maxReconsumeTimes = requestHeader.getMaxReconsumeTimes();
             }
             int reconsumeTimes = requestHeader.getReconsumeTimes() == null ? 0 : requestHeader.getReconsumeTimes();
+            /**
+             * ：如果消息重试次数超过允许的最大重试次数，消息将进入到 DLD 延迟队列 。 延
+             * 迟队列主题： %DLQ%＋消费组名，延迟队列在消息消费时将重点讲解 。
+             */
             if (reconsumeTimes >= maxReconsumeTimes) {
                 newTopic = MixAll.getDLQTopic(groupName);
                 int queueIdInt = Math.abs(this.random.nextInt() % 99999999) % DLQ_NUMS_PER_GROUP;
@@ -383,6 +419,9 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
         }
 
         response.setCode(-1);
+        /**
+         * Stepl ：检查消息发送是否合理，这里完成了以下几件事情 。
+         */
         super.msgCheck(ctx, requestHeader, response);
         if (response.getCode() != -1) {
             return response;
@@ -401,6 +440,10 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
         msgInner.setTopic(requestHeader.getTopic());
         msgInner.setQueueId(queueIdInt);
 
+        /**
+         * ：如果消息重试次数超过允许的最大重试次数，消息将进入到 DLD 延迟队列 。 延
+         * 迟队列主题： %DLQ%＋消费组名，延迟队列在消息消费时将重点讲解 。
+         */
         if (!handleRetryAndDLQ(requestHeader, response, request, msgInner, topicConfig)) {
             return response;
         }
@@ -429,6 +472,10 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
             }
             putMessageResult = this.brokerController.getTransactionalMessageService().prepareMessage(msgInner);
         } else {
+            /**
+             * ：调用 DefaultMessageStore#putMessage 进行消息存储。 关于消息存储的实现细
+             * 节将在第 4 章重点剖析 。
+             */
             putMessageResult = this.brokerController.getMessageStore().putMessage(msgInner);
         }
 

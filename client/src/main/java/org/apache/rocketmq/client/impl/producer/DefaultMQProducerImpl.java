@@ -94,10 +94,108 @@ import org.apache.rocketmq.remoting.exception.RemotingException;
 import org.apache.rocketmq.remoting.exception.RemotingTimeoutException;
 import org.apache.rocketmq.remoting.exception.RemotingTooMuchRequestException;
 
+/**
+ *
+ */
 public class DefaultMQProducerImpl implements MQProducerInner {
     private final InternalLogger log = ClientLogger.getLog();
     private final Random random = new Random();
+    /**
+     *
+     * 在项目中 手动创建一个Producer对象如下：  DefaultMQProducer producer = new DefaultMQProducer(producerGroup);
+     *
+     *  在DefaultMQProducer的构造器中会自动创建一个DefaultMQProducerImpl，同时DefaultMQProducer 会持有一个DefaultMQProducerImpl
+     *   public DefaultMQProducer(final String producerGroup, RPCHook rpcHook) {
+     *         this.producerGroup = producerGroup;
+     *         defaultMQProducerImpl = new DefaultMQProducerImpl(this, rpcHook);
+     *     }
+     *
+     * 在创建DefaultMQProducerImpl的时候 我们会将 外部的DefaultMQProducer 传递给DefaultMQProducerImpl
+     *
+     * 因此DefaultMQProducer 和DefaultMQProducerImpl 之间存在互相引用的关系
+     *
+     * 简单来说DefaultMQProducer 更像是一个配置信息， 我们通过this.defaultMQProducer.getProducerGroup() 就可以拿到ProducerGroup
+     *
+     * DefaultMQProducer是 RocketMQ暴露给应用程序使用的。 我们应用程序中 设置producer的属性就是通过DefaultMQProducer对外暴露的接口设置的。
+     * 比如 public class DefaultMQProducer extends ClientConfig implements MQProducer 继承自ClientConfig接口，对外暴露属性设置。同时实现了
+     * MQProducer接口，对外包里Producer的能力，但是其能力实际是委托给DefaultMQProducer内部的DefaultMQProducerImpl来试下你的
+     *
+     *
+     */
     private final DefaultMQProducer defaultMQProducer;
+    /**
+     * {
+     * 	"AUTO_CREATE_TOPIC_KEY":{
+     * 		"topicRouteData":{
+     * 			"brokerDatas":[
+     *                                {
+     * 					"cluster":"DefaultCluster",
+     * 					"brokerAddrs":{
+     * 						"0":"192.168.102.73:10911"
+     *                    },
+     * 					"brokerName":"localhost"
+     *                }
+     * 			],
+     * 			"filterServerTable":{},
+     * 			"queueDatas":[
+     *                {
+     * 					"readQueueNums":8,
+     * 					"perm":6,
+     * 					"writeQueueNums":8,
+     * 					"topicSynFlag":0,
+     * 					"brokerName":"localhost"
+     *                }
+     * 			]
+     * 		},
+     * 		"sendWhichQueue":{
+     * 			"andIncrement":2104951802
+     * 		},
+     * 		"orderTopic":false,
+     * 		"haveTopicRouterInfo":true,
+     * 		"messageQueueList":[* 			{
+     * 				"queueId":0,
+     * 				"topic":"AUTO_CREATE_TOPIC_KEY",
+     * 				"brokerName":"localhost"
+     *            },
+     *            {
+     * 				"queueId":1,
+     * 				"topic":"AUTO_CREATE_TOPIC_KEY",
+     * 				"brokerName":"localhost"
+     *            },
+     *            {
+     * 				"queueId":2,
+     * 				"topic":"AUTO_CREATE_TOPIC_KEY",
+     * 				"brokerName":"localhost"
+     *            },
+     *            {
+     * 				"queueId":3,
+     * 				"topic":"AUTO_CREATE_TOPIC_KEY",
+     * 				"brokerName":"localhost"
+     *            },
+     *            {
+     * 				"queueId":4,
+     * 				"topic":"AUTO_CREATE_TOPIC_KEY",
+     * 				"brokerName":"localhost"
+     *            },
+     *            {
+     * 				"queueId":5,
+     * 				"topic":"AUTO_CREATE_TOPIC_KEY",
+     * 				"brokerName":"localhost"
+     *            },
+     *            {
+     * 				"queueId":6,
+     * 				"topic":"AUTO_CREATE_TOPIC_KEY",
+     * 				"brokerName":"localhost"
+     *            },
+     *            {
+     * 				"queueId":7,
+     * 				"topic":"AUTO_CREATE_TOPIC_KEY",
+     * 				"brokerName":"localhost"
+     *            }
+     * 		]* 	}
+     * }
+     *
+     */
     private final ConcurrentMap<String/* topic */, TopicPublishInfo> topicPublishInfoTable =
         new ConcurrentHashMap<String, TopicPublishInfo>();
     private final ArrayList<SendMessageHook> sendMessageHookList = new ArrayList<SendMessageHook>();
@@ -108,6 +206,12 @@ public class DefaultMQProducerImpl implements MQProducerInner {
     protected BlockingQueue<Runnable> checkRequestQueue;
     protected ExecutorService checkExecutor;
     private ServiceState serviceState = ServiceState.CREATE_JUST;
+    /**
+     * 不管是Producer还是Consumer，比如DefaultMQProducerImpl ，DefaultMQPushConsumerImpl、DefaultMQPullConsumerIml中
+     * 都会有一个MQClientInstance 属性。 一个MQClientInstance内可以有多个Producer和consumer
+     *
+     * consumer和Producer的start最终都会调用MQClientInstance的start方法
+     */
     private MQClientInstance mQClientFactory;
     private ArrayList<CheckForbiddenHook> checkForbiddenHookList = new ArrayList<CheckForbiddenHook>();
     private int zipCompressLevel = Integer.parseInt(System.getProperty(MixAll.MESSAGE_COMPRESS_LEVEL, "5"));
@@ -174,7 +278,12 @@ public class DefaultMQProducerImpl implements MQProducerInner {
     public void start() throws MQClientException {
         this.start(true);
     }
-
+    /**
+     * 不管是Producer还是Consumer，比如DefaultMQProducerImpl ，DefaultMQPushConsumerImpl、DefaultMQPullConsumerIml中
+     * 都会有一个MQClientInstance 属性。 一个MQClientInstance内可以有多个Producer和consumer
+     *
+     * consumer和Producer的start最终都会调用MQClientInstance的start方法
+     */
     public void start(final boolean startFactory) throws MQClientException {
         switch (this.serviceState) {
             case CREATE_JUST:
@@ -182,12 +291,28 @@ public class DefaultMQProducerImpl implements MQProducerInner {
 
                 this.checkConfig();
 
+                /**
+                 * 如果producerGroup是 RocketMQ内置的客户端生产者组，此时将Producer的instanceName 改为pid，后续生成clientid
+                 * 的时候会使用到
+                 */
                 if (!this.defaultMQProducer.getProducerGroup().equals(MixAll.CLIENT_INNER_PRODUCER_GROUP)) {
                     this.defaultMQProducer.changeInstanceNameToPID();
                 }
 
+                /**
+                 * 获取MQClientInstance 对象，一般来说一个JVM就是一个MQClient，这个Client中有多个Producer 多个Consumer
+                 * 问题： 是否一个JVM进程内就只有一个MQClinet？
+                 * 属性mqClientFactory 就是MQClientInstance
+                 */
                 this.mQClientFactory = MQClientManager.getInstance().getOrCreateMQClientInstance(this.defaultMQProducer, rpcHook);
 
+                /**
+                 * 如果对于ProducerGroup ：28751_UpgradeTenantPaasMetaDataGroup] 已经存在了一个生产者，则 当你再创建一个Producer，该producerGroup已经存在了则不允许创建新的 Producer
+                 *
+                 * 注意对Consumer和Producer启动的对比，同一个JVM进程内要求 对于同一个ProducerGroup只能有一个Producer
+                 * 但是对于consumer来说 一个JVM内同一个ConsumerGroup可以有多个Consumer，在Consumer的start方法中我们并没有看到对 registerConsumer的校验
+                 *
+                 */
                 boolean registerOK = mQClientFactory.registerProducer(this.defaultMQProducer.getProducerGroup(), this);
                 if (!registerOK) {
                     this.serviceState = ServiceState.CREATE_JUST;
@@ -196,8 +321,16 @@ public class DefaultMQProducerImpl implements MQProducerInner {
                         null);
                 }
 
+                /**
+                 * 这里启动的时候讲  createTopicKey放入到 toplicPublisInfo中，注意 value是一个 new  TopicPublishInfo
+                 */
                 this.topicPublishInfoTable.put(this.defaultMQProducer.getCreateTopicKey(), new TopicPublishInfo());
 
+                /**
+                 *
+                 * 这里判断是否调用MQClientInstance的start方法,startFactory 永远为true
+                 *
+                 */
                 if (startFactory) {
                     mQClientFactory.start();
                 }
@@ -548,12 +681,21 @@ public class DefaultMQProducerImpl implements MQProducerInner {
         final SendCallback sendCallback,
         final long timeout
     ) throws MQClientException, RemotingException, MQBrokerException, InterruptedException {
+
+        /**
+         *
+         * 确认serviceState的状态
+         */
         this.makeSureStateOK();
         Validators.checkMessage(msg, this.defaultMQProducer);
+
         final long invokeID = random.nextLong();
         long beginTimestampFirst = System.currentTimeMillis();
         long beginTimestampPrev = beginTimestampFirst;
         long endTimestamp = beginTimestampFirst;
+        /**
+         * topic的 publishInfo
+         */
         TopicPublishInfo topicPublishInfo = this.tryToFindTopicPublishInfo(msg.getTopic());
         if (topicPublishInfo != null && topicPublishInfo.ok()) {
             boolean callTimeout = false;
@@ -563,8 +705,55 @@ public class DefaultMQProducerImpl implements MQProducerInner {
             int timesTotal = communicationMode == CommunicationMode.SYNC ? 1 + this.defaultMQProducer.getRetryTimesWhenSendFailed() : 1;
             int times = 0;
             String[] brokersSent = new String[timesTotal];
+            /**
+             * 循环尝试发送消息直到发送成功或者超过指定的次数
+             *
+             * 首先消息发送端采用重试机制 ，由 retryTimes WhenSendFailed 指 定 同步方式重试次
+             * 数 ，异步重试机制在收到消息发送结构后执行回调之前进行重试。 由 retryTimes When Send-
+             * AsyncFailed 指定，接下来就是循环执行 ， 选择消息队列 、发送消息，发送成功则返回，收
+             * 到异常则重试。
+             */
             for (; times < timesTotal; times++) {
+                /**
+                 *  * 注意这个lastBrokerName， for第一次循环的时候lastBrokerName为null，为什么呢？因为for循环外部定义的mq为null，所以下面的lastBrokerName就是null。
+                 *
+                 *                  *
+                 *                  *  * 首先在一次消息发送过程中，可能会多次执行选择消息队列这个方法， lastBrokerName
+                 *                  *          * 就是上 一 次选择的执行发送消息失败的 Broker 。
+                 *                  *          *
+                 *                  *          *  第一次执行消息队列选择时，lastBrokerName 为 null ，此时 直接用 sendWhichQueue 自增再获取值 ， 与当前路由 表 中消息
+                 *                  *          * 队列个数取模， 返回该位置 的 MessageQueue(selectOneMessageQueue （） 方法），如果消息发
+                 *                  *          * 送再失败的话 ， 下次进行消息队列选择时规避上次 MesageQueue 所在的 Broker， 否则还是
+                 *                  *          * 很有可能再次失败.
+                 *                  *          *
+                 *
+                 *    考虑到lastBrokerName为null，且MQFaultStrategy的sendLatencyFaultEnable 属性为false的情况下，会执行TopicPublisInfo的selectOneMessageQueue选择队列
+                 *     第一次执行selectOneMessageQueue时lastBrokerName为null，此时选择了某一个MessageQueue（MessageQueue中有brokerName）进行发送，结果发送失败了，
+                 *     然后第二次执行electOneMessageQueue 传入了第一次选择失败的brokerName。然后我们会根据brokerName规避 在第一次消息发送过程中故障的broker
+                 *
+                 *
+                 */
                 String lastBrokerName = null == mq ? null : mq.getBrokerName();
+                /**
+                 *选择消息队列
+                 *
+                 *根据路由信息选择消息队列，返回的消息队列按照 broker 、序号排序 。 举例说明，如
+                 * 果 topicA 在 broker-a, broker” b 上分别创建了 4 个队列 ， 那么返回的消息队列：［｛ “ broker-
+                 * Name ”:” broker-a ”,” queueld ”:O}, {“ brokerName ”:” broker-a ”,” queue Id ” .1},
+                 * {“brokerName ”:” broker-a ’,,” queueld ”:2}, ｛飞rokerName ”．” broker-a ”，” queueld ” ：匀 ，
+                 * {“ brokerName ” . ” broker-b ”,” queueld ”:0}, {“ brokerName ”.” broker-
+                 * b ” J’ queueld ” ·I }, {“ broker Name ”: ” broker-b ”,” queueld ”:2},  {“ brokerName ” :
+                 * "  broker-b ” ， ” queueld ” ： 3 汀 ，那 RocketMQ 如何选择消息队列呢？
+                 *
+                 *首先消息发送端采用重试机制 ，由 retryTimesWhenSendFailed 指 定 同步方式重试次
+                 * 数 ，异步重试机制在收到消息发送结构后执行回调之前进行重试。 由 retryTimesWhenSendAsyncFailed 指定，接下来就是循环执行 ， 选择消息队列 、发送消息，发送成功则返回，收
+                 * 到异常则重试。 选择消息队列有两种方式 。
+                 * 1 )  sendLatencyFaultEnable=false ，默认不启用 Broker故障延迟机制 。
+                 * 2 )  sendLatencyFaultEnable=true ，启用 Broker 故障延迟机制 。
+                 *
+                 *
+                 *
+                 */
                 MessageQueue mqSelected = this.selectOneMessageQueue(topicPublishInfo, lastBrokerName);
                 if (mqSelected != null) {
                     mq = mqSelected;
@@ -581,8 +770,45 @@ public class DefaultMQProducerImpl implements MQProducerInner {
                             break;
                         }
 
+                        /**
+                         * 消息发送
+                         * 消息发送参数详解 。
+                         * 1 )  Message  msg ： 待发送消息 。
+                         * 2 )  MessageQueue mq ： 消息将发送到该消息队列上 。
+                         * 3 )  CommunicationMode communicationMode ： 消息 发送模式 ， SYNC 、 ASYNC 、
+                         * ONEWAY 。
+                         * 4  )  SendCallback sendCallback ： 异步消息 回 调函数。
+                         * 5 )  TopicPublishinfo topicPublishlnfo ： 主题路由信息
+                         * 6 )  long timeout ： 消 息发送超时时间 。
+                         */
                         sendResult = this.sendKernelImpl(msg, mq, communicationMode, sendCallback, topicPublishInfo, timeout - costTime);
                         endTimestamp = System.currentTimeMillis();
+                        /**
+                         * broker故障延迟机制：
+                         * 在不启用故障延迟的情况下会有什么问题呢？ 发送消息的时候我们需要选择一个MessageQueue，如果因为Broker宕机导致第一次发送失败了，
+                         * 那么第二次选择MessageQueue的时候要规避同一个Broker的MessageQueue。 在RocketMQ的 selectOneMessageQueue(lastBrokerName);
+                         * 方法中进行选择MessageQueue，其中参数lastBrokerName表示上一次发送失败的BrokerName，因此第一次发送的时候为null,
+                         * 第二次发送的时候为第一次发送失败的MessageQueue所在的BrokerName， 如果第二次发送失败了，那么我们第三次选择的时候
+                         * lastBrokerName就是第二法发送失败的BrokerName，那么这个时候第三次选择MessageQueue的过程中无法规避选中第一次发送失败的BrokerName的MessageQueue。
+                         *
+                         * 消息发送很有可能会失败，再次引发重试，带来不必要的性能损耗，那么有什么方法在一次消息发送失败后，暂时将该 Broker 排除在消息队列选择范围外呢？
+
+                         * 或许有朋友会问， Broker 不可用后 ，路由信息中为什么还会包含该 Brok町的路由信息呢？其实这不难解释：首先，
+                         * NameServer 检测 Broker 是否可用是有延迟的，最短为一次心跳检测间 隔（ 1 0s ）； 其次， NameServer 不会检测到 Broker
+                         * 岩机后马上推送消息给消息生产者，而是消息生产者每隔 30s 更新一次路由信息，所以消息生产者最快感知 Broker 最新的路由信息也需要 30s 。
+                         * 如果能引人一种机制，在 Broker 若机期间，如果一次消息发送失败后，可以将该 Broker 暂时排除在消息队列的选择范围中 。
+                         *
+                         * 消息发送失败的时候创建一条失败记录， 指定broker名称，本次消息发送延迟时间（本次消息失败时的时间减去发送前开始时间）
+                         * 第三个参数isolation 表示是否隔离，该参数的含义如果为true，则使用默认时长30s来计算broker故障规避时长；如果为false，则使用本次消息发送
+                         * 延迟时间来计算Broker故障规避时长。
+                         *
+                         * 故障延迟机制的原理就是：消息发送失败的是时候 创建一条发送失败记录，记录broker和故障延迟时间，指定该broker在未来的故
+                         * 障延迟时间内不能发送消息。这个故障延迟时间 可以使用固定的30秒，也可以根据消息发送开始时间到消息发送失败时的差值时间 来计
+                         * 算一个时间作为故障延迟时间，差值时间越大计算得到的故障延迟时间越大，故障延迟时间就是broker要规避 的时长。接下来多久的时间内该 Broker 将不
+                         * 参与消息发送队列负载。此时消息发送时会顺序选择MessageQueue，然后判断这个MessageQueue是否可用，判断的依据就是根据发送失败记录。
+                         *
+                         *
+                         */
                         this.updateFaultItem(mq.getBrokerName(), endTimestamp - beginTimestampPrev, false);
                         switch (communicationMode) {
                             case ASYNC:
@@ -602,6 +828,16 @@ public class DefaultMQProducerImpl implements MQProducerInner {
                         }
                     } catch (RemotingException e) {
                         endTimestamp = System.currentTimeMillis();
+                        /**
+                         * 上述代码如果发送过程中抛出了异常，调用 DefaultMQProducerlmpl#updateFaultlt巳m,
+                         * 该方法则直接调用 MQFaultStrategy#updateFaultltem 方法，关注一下各个参数的含义 。
+                         *
+                         * 第一个参数 ： broker 名称。
+                         * 第二个参数：本次消息发送延迟时间 currentLatency 。
+                         * 第三个参数 ： isolation ，是否隔离，该参数的含义如果为 true ，则使用默认时长 30s 来
+                         * 计算 Broker 故 障规避 时长 ，如果为 false ， 则使用本次消息发送延迟时间来计算 Broker 故障规避时长
+                         *
+                         */
                         this.updateFaultItem(mq.getBrokerName(), endTimestamp - beginTimestampPrev, true);
                         log.warn(String.format("sendKernelImpl exception, resend at once, InvokeID: %s, RT: %sms, Broker: %s", invokeID, endTimestamp - beginTimestampPrev, mq), e);
                         log.warn(msg.toString());
@@ -609,6 +845,16 @@ public class DefaultMQProducerImpl implements MQProducerInner {
                         continue;
                     } catch (MQClientException e) {
                         endTimestamp = System.currentTimeMillis();
+                        /**
+                         * 上述代码如果发送过程中抛出了异常，调用 DefaultMQProducerlmpl#updateFaultlt巳m,
+                         * 该方法则直接调用 MQFaultStrategy#updateFaultltem 方法，关注一下各个参数的含义 。
+                         *
+                         * 第一个参数 ： broker 名称。
+                         * 第二个参数：本次消息发送延迟时间 currentLatency 。
+                         * 第三个参数 ： isolation ，是否隔离，该参数的含义如果为 true ，则使用默认时长 30s 来
+                         * 计算 Broker 故 障规避 时长 ，如果为 false ， 则使用本次消息发送延迟时间来计算 Broker 故障规避时长
+                         *
+                         */
                         this.updateFaultItem(mq.getBrokerName(), endTimestamp - beginTimestampPrev, true);
                         log.warn(String.format("sendKernelImpl exception, resend at once, InvokeID: %s, RT: %sms, Broker: %s", invokeID, endTimestamp - beginTimestampPrev, mq), e);
                         log.warn(msg.toString());
@@ -616,6 +862,16 @@ public class DefaultMQProducerImpl implements MQProducerInner {
                         continue;
                     } catch (MQBrokerException e) {
                         endTimestamp = System.currentTimeMillis();
+                        /**
+                         * 上述代码如果发送过程中抛出了异常，调用 DefaultMQProducerlmpl#updateFaultlt巳m,
+                         * 该方法则直接调用 MQFaultStrategy#updateFaultltem 方法，关注一下各个参数的含义 。
+                         *
+                         * 第一个参数 ： broker 名称。
+                         * 第二个参数：本次消息发送延迟时间 currentLatency 。
+                         * 第三个参数 ： isolation ，是否隔离，该参数的含义如果为 true ，则使用默认时长 30s 来
+                         * 计算 Broker 故 障规避 时长 ，如果为 false ， 则使用本次消息发送延迟时间来计算 Broker 故障规避时长
+                         *
+                         */
                         this.updateFaultItem(mq.getBrokerName(), endTimestamp - beginTimestampPrev, true);
                         log.warn(String.format("sendKernelImpl exception, resend at once, InvokeID: %s, RT: %sms, Broker: %s", invokeID, endTimestamp - beginTimestampPrev, mq), e);
                         log.warn(msg.toString());
@@ -637,6 +893,16 @@ public class DefaultMQProducerImpl implements MQProducerInner {
                         }
                     } catch (InterruptedException e) {
                         endTimestamp = System.currentTimeMillis();
+                        /**
+                         * 上述代码如果发送过程中抛出了异常，调用 DefaultMQProducerlmpl#updateFaultlt巳m,
+                         * 该方法则直接调用 MQFaultStrategy#updateFaultltem 方法，关注一下各个参数的含义 。
+                         *
+                         * 第一个参数 ： broker 名称。
+                         * 第二个参数：本次消息发送延迟时间 currentLatency 。
+                         * 第三个参数 ： isolation ，是否隔离，该参数的含义如果为 true ，则使用默认时长 30s 来
+                         * 计算 Broker 故 障规避 时长 ，如果为 false ， 则使用本次消息发送延迟时间来计算 Broker 故障规避时长
+                         *
+                         */
                         this.updateFaultItem(mq.getBrokerName(), endTimestamp - beginTimestampPrev, false);
                         log.warn(String.format("sendKernelImpl exception, throw exception, InvokeID: %s, RT: %sms, Broker: %s", invokeID, endTimestamp - beginTimestampPrev, mq), e);
                         log.warn(msg.toString());
@@ -686,23 +952,80 @@ public class DefaultMQProducerImpl implements MQProducerInner {
             null).setResponseCode(ClientErrorCode.NOT_FOUND_TOPIC_EXCEPTION);
     }
 
+    /**
+     *
+     * 第一次发送消息时，本地没有缓存 topic 的路由信息，查询 NameServer 尝试获取，如
+     * 果路由信息未找到，再次尝试用默认主题 DefaultMQProducerlmpl#createTopicKey 去查询，
+     * 如果 BrokerConfig#autoCreateTopicEnable 为 true 时， NameServer 将返回路由信息，如果
+     * autoCreateTopicEnab l e 为 false 将抛出无法找到 topic 路由异常。 代码 MQClientlnstance#up
+     * dateTopicRoutelnfoFromN  ameServer 这个方法的功能是消息生产者更新和维护路由 缓存，
+     *
+     * @param topic
+     * @return
+     */
     private TopicPublishInfo tryToFindTopicPublishInfo(final String topic) {
+
         TopicPublishInfo topicPublishInfo = this.topicPublishInfoTable.get(topic);
+        /**
+         * ok方法内会判断 topic的messageQueueList是否为null或者size=0，如果为空则ok返回false
+         */
         if (null == topicPublishInfo || !topicPublishInfo.ok()) {
+            /**
+             * 如果topicPublishInfo==null或者其中的MessageQueueList为空则 创建一个新的TopicPublishInfo
+             */
             this.topicPublishInfoTable.putIfAbsent(topic, new TopicPublishInfo());
+
+            /**
+             * 从nameServer中查询topic，.
+             * 第一次发送消息时，本地没有缓存 topic 的路由信息，查询 NameServer 尝试获取，如果路由信息未找到，再次尝试用默认主题 DefaultMQProducerlmpl#createTopicKey 去查询，
+             * 如果 BrokerConfig#autoCreateTopicEnable 为 true 时， NameServer 将返回路由信息，如果
+             * autoCreateTopicEnab l e 为 false 将抛出无法找到 topic 路由异常。
+             *
+             */
             this.mQClientFactory.updateTopicRouteInfoFromNameServer(topic);
             topicPublishInfo = this.topicPublishInfoTable.get(topic);
         }
 
+        /**
+         * 如果上面 没有查询到topic，则会导致 执行下面的else，下面的else 会执行 updateTopicRouteInfoFromNameServer
+         * 但是传入的参数是 isDefault为true， 同时传入了defaultMQProducer，
+         * 在真正查询topic的时候查询的是 defaultMQProducer.getCreateTopicKey() 这个返回值是 org.apache.rocketmq.common.topic.TopicValidator#AUTO_CREATE_TOPIC_KEY_TOPIC
+         */
         if (topicPublishInfo.isHaveTopicRouterInfo() || topicPublishInfo.ok()) {
             return topicPublishInfo;
         } else {
+            /**
+             * 这个参数中的true 表示isDefault，如果该参数为true，我们会传入一个defaultMqProducer
+             *
+             */
             this.mQClientFactory.updateTopicRouteInfoFromNameServer(topic, true, this.defaultMQProducer);
             topicPublishInfo = this.topicPublishInfoTable.get(topic);
             return topicPublishInfo;
         }
     }
 
+    /**
+     * 消息发送参数详解 。
+     * 1 )  Message  msg ： 待发送消息 。
+     * 2 )  MessageQueue mq ： 消息将发送到该消息队列上 。
+     * 3 )  CommunicationMode communicationMode ： 消息 发送模式 ， SYNC 、 ASYNC 、
+     * ONEWAY 。
+     * 4  )  SendCallback sendCallback ： 异步消息 回 调函数。
+     * 5 )  TopicPublishinfo topicPublishlnfo ： 主题路由信息
+     * 6 )  long timeout ： 消 息发送超时时间 。
+     *
+     * @param msg
+     * @param mq
+     * @param communicationMode
+     * @param sendCallback
+     * @param topicPublishInfo
+     * @param timeout
+     * @return
+     * @throws MQClientException
+     * @throws RemotingException
+     * @throws MQBrokerException
+     * @throws InterruptedException
+     */
     private SendResult sendKernelImpl(final Message msg,
         final MessageQueue mq,
         final CommunicationMode communicationMode,
@@ -710,6 +1033,12 @@ public class DefaultMQProducerImpl implements MQProducerInner {
         final TopicPublishInfo topicPublishInfo,
         final long timeout) throws MQClientException, RemotingException, MQBrokerException, InterruptedException {
         long beginStartTime = System.currentTimeMillis();
+        /**
+         * ：根据 MessageQueue 获取 Broker 的网络地址。 如果 MQC !ientln s tance 的
+         * broker  A dd rTable 禾缓存该 Broke r 的信息，则从 NameServer 主动更新一下 top ic 的路由信
+         * 息 。 如果路由更新后还是找不到 Broker 信息，则抛出 MQC li entExc 叩tio 口，提示 Bro ker 不
+         * 存在
+         */
         String brokerAddr = this.mQClientFactory.findBrokerAddressInPublish(mq.getBrokerName());
         if (null == brokerAddr) {
             tryToFindTopicPublishInfo(mq.getTopic());
@@ -723,6 +1052,12 @@ public class DefaultMQProducerImpl implements MQProducerInner {
             byte[] prevBody = msg.getBody();
             try {
                 //for MessageBatch,ID has been set in the generating process
+                /**
+                 * ：为消息分配全局唯一 D ，如果消息体默认超过 4K( compressMsgBodyOverHowmuch),
+                 * 会对消息体采用 zip 压缩，并设置消息的系统标记为 MessageSysFlag.CO孔1PRESSED_FLAG。
+                 * 如果是事务 Prepared 消息，则设 置 消息的系统标记为 MessageSysF l ag .TRANSACTION _
+                 * PREPARED  TYPE 。
+                 */
                 if (!(msg instanceof MessageBatch)) {
                     MessageClientIDSetter.setUniqID(msg);
                 }
@@ -757,6 +1092,10 @@ public class DefaultMQProducerImpl implements MQProducerInner {
                     this.executeCheckForbiddenHook(checkForbiddenContext);
                 }
 
+                /**
+                 * 如果注册了消息发送钩子函数， 则执行消息发送之前的增强逻辑 。 通过 DefaultMQProducerlmpl #registerSendMessageHook 注册钩子处理类，并且可以注册多个。 简单看
+                 * 一下钩子处理类接口 。
+                 */
                 if (this.hasSendMessageHook()) {
                     context = new SendMessageContext();
                     context.setProducer(this);
@@ -782,6 +1121,14 @@ public class DefaultMQProducerImpl implements MQProducerInner {
                 requestHeader.setProducerGroup(this.defaultMQProducer.getProducerGroup());
                 requestHeader.setTopic(msg.getTopic());
                 requestHeader.setDefaultTopic(this.defaultMQProducer.getCreateTopicKey());
+                /**
+                 * 这里设置了topic的队列数量是4
+                 *
+                 * 构建消息发送请求包。 主要包含如下重要信息：生产者组、主题名称、默认
+                 * 创建主题 Key 、该 主题在单个 Broker 默认 队列数 、队 列 ID （队列序号）、消息系统标记
+                 * (  MessageSysFlag ） 、 消息发送 时间 、消息标记（ RocketMQ 对消息中的 flag 不做任何处理 ，
+                 * 供应用程序使用）、 消息扩展属性 、消息重试次数、是否是批量消息等 。
+                 */
                 requestHeader.setDefaultTopicQueueNums(this.defaultMQProducer.getDefaultTopicQueueNums());
                 requestHeader.setQueueId(mq.getQueueId());
                 requestHeader.setSysFlag(sysFlag);
@@ -806,8 +1153,19 @@ public class DefaultMQProducerImpl implements MQProducerInner {
                 }
 
                 SendResult sendResult = null;
+                /**
+                 * ：根据消 息发送方式，同步、异步、单向 方式进行网络传输 。
+                 */
                 switch (communicationMode) {
                     case ASYNC:
+                        /**
+                         * 消息异步发送是指消息生产者调用发送的 API 后，无须阻塞等待消息服务器返回本次
+                         * 消息发送结果，只需要提供一个回调函数，供消息发送客户端在收到响应结果回调 。 异步方
+                         * 式相比同步方式，消息发送端的发送性能会显著提高，但为了保护消息服务器的负载压力，
+                         * RocketMQ 对消息发送的异步消息进行了井发控制，通过参数 clientAsyncSemaphoreValue
+                         * 来控制，默认为 65535 。 异步消息发送虽然也可以通过 DefaultMQProducer#retryTimes ­
+                         * WhenSendAsyncFailed 属性来控制消息重试次数，但是重试的
+                         */
                         Message tmpMessage = msg;
                         boolean messageCloned = false;
                         if (msgBodyCompressed) {
@@ -846,6 +1204,12 @@ public class DefaultMQProducerImpl implements MQProducerInner {
                             this);
                         break;
                     case ONEWAY:
+                        /**
+                         * 单 向发送是指消息生产者调用消息发送的 API 后 ，无须等待消息服务器返回本次消息
+                         * 发送结果，并且无须提供回调函数，表示消息发送压根就不关心本次消息发送是否成功，
+                         * 其实现原理与异步消息发送相同，只是消息发送客户端在收到响应结果后什么都不做而已，
+                         * 并且没有重试机制 。
+                         */
                     case SYNC:
                         long costTimeSync = System.currentTimeMillis() - beginStartTime;
                         if (timeout < costTimeSync) {

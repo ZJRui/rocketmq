@@ -165,6 +165,18 @@ public abstract class AbstractSendMessageProcessor extends AsyncNettyRequestProc
 
     protected RemotingCommand msgCheck(final ChannelHandlerContext ctx,
         final SendMessageRequestHeader requestHeader, final RemotingCommand response) {
+        /**
+         * Stepl ：检查消息发送是否合理，这里完成了以下几件事情 。
+         * 1 ）检查该 Broker 是否有写权限 。
+         * 2 ）检查该 Topic 是否可以进行消息发送。 主要针对默认主题 ， 默认主题不能发送消息，
+         * 仅仅供路由 查找 。
+         * 3 ）在 NameServer 端存储主题的配 置信 息，默认路径：$｛ROCKET_HOME}/store/
+         * config/topic 扣on 。 下面 是主题 存储信息 。 ord巳r ： 是否是顺序 消息； perm ：权限码；
+         * readQueueNums ：读队列 数量 ； writeQueueNums ： 写队列数量； t opicName ： 主题名称 ；
+         * topicSysFlag  :  topic  Flag ， 当 前版本暂为保留； topicFilt巳rType ：主题过滤方式，当前版本
+         * 仅支持 SINGLE TAG 。
+         * 4 ）检查队列，如果队列不合法，返回错误码 。
+         */
         if (!PermName.isWriteable(this.brokerController.getBrokerConfig().getBrokerPermission())
             && this.brokerController.getTopicConfigManager().isOrderTopic(requestHeader.getTopic())) {
             response.setCode(ResponseCode.NO_PERMISSION);

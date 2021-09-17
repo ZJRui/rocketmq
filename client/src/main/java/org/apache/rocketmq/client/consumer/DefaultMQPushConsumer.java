@@ -89,6 +89,17 @@ public class DefaultMQPushConsumer extends ClientConfig implements MQPushConsume
      * </p>
      *
      * This field defaults to clustering.
+     *
+     * 消息模型定义了将消息传递给每个消费者客户端的方式。RocketMQ支持两种消息模型:集群和广播。
+     * 如果设置了集群，具有相同consumerGroup的消费者客户端将只消费订阅的消息的分片，
+     * 从而实现负载平衡;相反，如果设置了广播，则每个消费者客户端将分别使用所有订阅的消息。该字段默认为集群。
+     *
+     *一个consumer可以订阅多个topic ：consumer.subscribe(topicName, "*");
+     * 最终是放置到了 COnsumer内部的 rebalanceImpl的 subscriptionInner中   this.rebalanceImpl.getSubscriptionInner().put(topic, subscriptionData);
+     *
+     *
+     *如果consumer的messageModel为集群，则对该consumer的所有topic都是按照集群模式消费。
+     *
      */
     private MessageModel messageModel = MessageModel.CLUSTERING;
 
@@ -155,11 +166,18 @@ public class DefaultMQPushConsumer extends ClientConfig implements MQPushConsume
 
     /**
      * Minimum consumer thread number
+     * 消费者最小线程数
      */
     private int consumeThreadMin = 20;
 
     /**
      * Max consumer thread number
+     * 消费者最大线程数
+     * ConsumerMessageConcurrentlyservice 和ConsumeMessageOrderlyService中会使用该属性创建 线程池 来消费消息。
+     *
+     * 由于消息消费者线程池使用无界队列，因此消息消费者线程个数其实最多只有consumeThreadMin个
+     *
+     * 参考ConsumeMessageConcurrentlyService 的构造器
      */
     private int consumeThreadMax = 20;
 
@@ -170,13 +188,18 @@ public class DefaultMQPushConsumer extends ClientConfig implements MQPushConsume
 
     /**
      * Concurrently max span offset.it has no effect on sequential consumption
+     *
+     * 并发消息消费时处理队列最大跨度，默认2000.表示如果消息处理队列中偏移量最大的消息和偏移量最小的消息的跨度超过2000 则延迟50秒后再拉取消息
+     *
      */
     private int consumeConcurrentlyMaxSpan = 2000;
 
     /**
      * Flow control threshold on queue level, each message queue will cache at most 1000 messages by default,
      * Consider the {@code pullBatchSize}, the instantaneous value may exceed the limit
+     * 每1000次流控后打印流控日志
      */
+
     private int pullThresholdForQueue = 1000;
 
     /**
@@ -185,6 +208,8 @@ public class DefaultMQPushConsumer extends ClientConfig implements MQPushConsume
      *
      * <p>
      * The size of a message only measured by message body, so it's not accurate
+     *
+     *
      */
     private int pullThresholdSizeForQueue = 100;
 
@@ -212,26 +237,35 @@ public class DefaultMQPushConsumer extends ClientConfig implements MQPushConsume
 
     /**
      * Message pull Interval
+     *
+     * 推模式下拉取任务间隔时间，默认一次拉取任务完成继续拉取
+     * 问题： 推模式 为什么要拉取？
      */
     private long pullInterval = 0;
 
     /**
      * Batch consumption size
+     * 消息并发消费时一次消费消息条数，通俗点说就是每次传入MessageListener 的consumeMessage中的消息条数
+     *
      */
     private int consumeMessageBatchMaxSize = 1;
 
     /**
      * Batch pull size
+     * 每次消息拉取所拉取的条数
+     *
      */
     private int pullBatchSize = 32;
 
     /**
      * Whether update subscription relationship when every pull
+     * 是否每次拉取消息都更新订阅信息
      */
     private boolean postSubscriptionWhenPull = false;
 
     /**
      * Whether the unit of subscription group
+     * 订阅组的单位
      */
     private boolean unitMode = false;
 
@@ -241,16 +275,25 @@ public class DefaultMQPushConsumer extends ClientConfig implements MQPushConsume
      *
      * If messages are re-consumed more than {@link #maxReconsumeTimes} before success, it's be directed to a deletion
      * queue waiting.
+     *
+     * 最大消费重试次数，如果消息消费次数超过maxReconsumeTimes还未成功，则将该消息转移到一个失败队列，等待被删除
+     *
+     * 问题：
      */
     private int maxReconsumeTimes = -1;
 
     /**
      * Suspending pulling time for cases requiring slow pulling like flow-control scenario.
+     *
+     * 延迟将该队列的消息提交到消费者线程的等待时间
+     *
      */
     private long suspendCurrentQueueTimeMillis = 1000;
 
     /**
      * Maximum amount of time in minutes a message may block the consuming thread.
+     * 消息消费超时时间，默认为15分钟
+     *
      */
     private long consumeTimeout = 15;
 
@@ -643,7 +686,7 @@ public class DefaultMQPushConsumer extends ClientConfig implements MQPushConsume
      *
      * This method will be removed or it's visibility will be changed in a certain version after April 5, 2020, so
      * please do not use this method.
-     *
+     *将消息发送回代理，该消息将在将来重新传递。2020年4月5日以后，这个方法将会被删除或者在某个版本中它的能见度会发生变化，所以请不要使用这个方法。
      * @param msg Message to send back.
      * @param delayLevel delay level.
      * @throws RemotingException if there is any network-tier error.

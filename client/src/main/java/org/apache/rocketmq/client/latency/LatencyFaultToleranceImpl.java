@@ -31,7 +31,23 @@ public class LatencyFaultToleranceImpl implements LatencyFaultTolerance<String> 
 
     @Override
     public void updateFaultItem(final String name, final long currentLatency, final long notAvailableDuration) {
+        /**
+         * 如果 isolation 为 true ，则 使用 30s 作为 computeNotAvailableDuration 方法的参数；如
+         * 果 isolation 为 false ，则 使用本次消息发送 时 延作为 computeNotAvailableDuration 方法的
+         * 参数，那 computeNotAvailableDuration 的作用 是计算因本次消息发送故障需要将 Broker
+         * 规避的时长，也就是接下来多久的时间内该 Broker 将不参与消息发送队列负载。 具体算
+         * 法 ：从 latencyMax 数组尾部开始寻找，找 到 第一个比 currentLatency 小的下标， 然后从
+         * notAvailableDuration 数组中获取需要规避 的时长，该方法最终调用 LatencyFaultTolerance
+         * 的 updateFaultltem 。
+         */
         FaultItem old = this.faultItemTable.get(name);
+        /**
+         * 根据 broker 名称从 缓存表中获 取 Faultitem ，如果找到则更新 Faultltem ，否则创 建
+         * Faultltem 。 这里有两个关键点 。
+         * 1 )  currentLatency 、 startTimeStamp 被 volatile 修饰。
+         * 2  )  startTimeStamp 为当前系统时间加上需要规避的时长。 startTimeStamp 是 判断
+         * brok er 当前是否可用 的直接一句，请看 F aultltem# isAv ai lable 方法。
+         */
         if (null == old) {
             final FaultItem faultItem = new FaultItem(name);
             faultItem.setCurrentLatency(currentLatency);
@@ -97,6 +113,12 @@ public class LatencyFaultToleranceImpl implements LatencyFaultTolerance<String> 
     }
 
     class FaultItem implements Comparable<FaultItem> {
+        /**
+         * Faultltem ： 失败条目 （ 规避规则条 目） 。
+         * 1 )  final  String name 条目唯一键，这里为 brokerName 。
+         * 2 )  private volatile Jong currentLatency 本次消息发送延迟 。
+         * 3 )  private volatile long startTimestamp 故障规避开始时间 。
+         */
         private final String name;
         private volatile long currentLatency;
         private volatile long startTimestamp;
@@ -131,6 +153,13 @@ public class LatencyFaultToleranceImpl implements LatencyFaultTolerance<String> 
         }
 
         public boolean isAvailable() {
+            /**
+             * 根据 broker 名称从 缓存表中获 取 Faultitem ，如果找到则更新 Faultltem ，否则创 建
+             * Faultltem 。 这里有两个关键点 。
+             * 1 )  currentLatency 、 startTimeStamp 被 volatile 修饰。
+             * 2  )  startTimeStamp 为当前系统时间加上需要规避的时长。 startTimeStamp 是 判断
+             * brok er 当前是否可用 的直接一句，请看 F aultltem# isAv ai lable 方法。
+             */
             return (System.currentTimeMillis() - startTimestamp) >= 0;
         }
 

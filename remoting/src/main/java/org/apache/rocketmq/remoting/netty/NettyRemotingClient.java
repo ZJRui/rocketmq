@@ -366,6 +366,9 @@ public class NettyRemotingClient extends NettyRemotingAbstract implements Remoti
     public RemotingCommand invokeSync(String addr, final RemotingCommand request, long timeoutMillis)
         throws InterruptedException, RemotingConnectException, RemotingSendRequestException, RemotingTimeoutException {
         long beginStartTime = System.currentTimeMillis();
+        /**
+         * 根据地址获取socket连接
+         */
         final Channel channel = this.getAndCreateChannel(addr);
         if (channel != null && channel.isActive()) {
             try {
@@ -619,6 +622,17 @@ public class NettyRemotingClient extends NettyRemotingAbstract implements Remoti
         }
     }
 
+    /**
+     *
+     *      * 同步阻塞的实现原理是： 首先为请求创建一个唯一id 和一个表示请求响应的对象ResponseFeature，然后将这两个对象作为key ,value
+     *      * 存储到一个Map中，这个map（responseTable）其实就是表示等待的响应表。然后调用Net通用的io.netty.channel.Channel#writeAndFlush(java.lang.Object)
+     *      * 方法将请求发送出去，这个writeAndFlush方法不会阻塞等待响应，同时在发送的 时候给这个channle注册了一个Listener，
+     *      * 在消息发送成功或者消息发送失败的时候都会回调Listener的方法，在Listener内判断如果发送失败则调用countDownLatch.countDown();
+     *      * 从而唤醒发送消息的线程。。因为writeAndFlus不会阻塞当前线程，所以当前线程write之后继续执行，
+     *      * 在ResponseFeature对象中有一个countDownLatch属性（new CountDownLatch(1);），write之后我们会
+     *      * 调用countDownLatch.await(timeoutMillis, TimeUnit.MILLISECONDS); 从而实现当前发送消息线程的 限时阻塞。
+     *
+     */
     class NettyClientHandler extends SimpleChannelInboundHandler<RemotingCommand> {
 
         @Override

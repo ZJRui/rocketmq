@@ -30,6 +30,14 @@ public class ManyPullRequest {
         this.pullRequestList.addAll(many);
     }
 
+    /**
+     *  值
+     * 得注意的是该方法使用了 synchronized ，说明该数据结 构 会存在并发访问，该属性是
+     * Pul!Reque stH old Serv ic e 线程的私有属性，会存在并发？答案是存在并发，下文重点提到的
+     * ReputMessageServ ice 内 部将持有 PullRequestHoldService ， 也会唤醒挂起线程从而执行消息
+     * 拉取尝试
+     * @return
+     */
     public synchronized List<PullRequest> cloneListAndClear() {
         if (!this.pullRequestList.isEmpty()) {
             List<PullRequest> result = (ArrayList<PullRequest>) this.pullRequestList.clone();

@@ -244,6 +244,31 @@ public class DefaultMQPullConsumerImpl implements MQConsumerInner {
             throw new MQClientException("maxNums <= 0", null);
         }
 
+        /**
+         * pullConsumer设置 订阅信息。
+         *
+         *
+         * DefaultMQPushConsumer 存在subscribe方法订阅某一个topic
+         * 但是DefaultMQPullConsumer并没有subscribe方法，  PullConsumer一般都是通过指定MessageQueue来拉取消息，MessageQueue中会指定Topic
+         *
+         *
+         *             DefaultMQPushConsumer consumer = new DefaultMQPushConsumer("testVA");
+         *
+         *             consumer.setNamesrvAddr("192.168.102.73:9876");
+         *             consumer.setMessageModel(MessageModel.BROADCASTING);
+         *
+         *             consumer.subscribe("topicTestVA", "*");
+         *             ======================
+         *
+         *               //定义一个PullConsumer
+         *             DefaultMQPullConsumer pullConsumer=new DefaultMQPullConsumer("FooBarGroup");
+         *             pullConsumer.setNamesrvAddr("192.168.102.73:9876");
+         *             pullConsumer.setUnitName("192.168.102.73:9876");
+         *             pullConsumer.start();
+         *              MessageQueue messageQueue = new MessageQueue(topic, brokerName, 0);
+         *         PullResult pullResult = pullConsumer.pull(messageQueue, "*", 1024, 3)
+         *
+         */
         this.subscriptionAutomatically(mq.getTopic());
 
         int sysFlag = PullSysFlag.buildSysFlag(false, block, true, false);
@@ -381,6 +406,12 @@ public class DefaultMQPullConsumerImpl implements MQConsumerInner {
     @Override
     public void doRebalance() {
         if (this.rebalanceImpl != null) {
+            /**
+             * pullConsumer为什么 isOrder为false
+             *
+             * PushConsumer中存在一个consumeOrderly属性， 该属性的取值是在consumer的start的方法中判断MessageListener的类型 如果是MessageListenerOrderly则为顺序消费，否则为并发消费
+             * 但是PullConsumer没有 consumerOrderly属性，因此PullConsumer全为false
+             */
             this.rebalanceImpl.doRebalance(false);
         }
     }
@@ -400,6 +431,15 @@ public class DefaultMQPullConsumerImpl implements MQConsumerInner {
 
     @Override
     public void updateTopicSubscribeInfo(String topic, Set<MessageQueue> info) {
+        /**
+         * consumer更新 订阅的topic比较简单，只是从rebalance中获取 其保存的topic的订阅信息。
+         * 一个Consumer有以一个RebalanceImpl，然后topic的订阅信息交给rebalanceImpl来实现
+         *
+         * RebalanceImpl中有两个属性
+         * （1） ConcurrentMap<String  topic, SubscriptionData> subscriptionInner
+         * （2） ConcurrentMap<String/* topic , Set<MessageQueue>> topicSubscribeInfoTable
+         *
+         * */
         Map<String, SubscriptionData> subTable = this.rebalanceImpl.getSubscriptionInner();
         if (subTable != null) {
             if (subTable.containsKey(topic)) {
@@ -630,6 +670,17 @@ public class DefaultMQPullConsumerImpl implements MQConsumerInner {
 
                 this.copySubscription();
 
+                /**
+                 * 如果消费模式Wie集群模式，则将consumer的instanceName转为pid，后续生成clientId的时候会使用到。
+                 *
+                 * 为什么要这样搞？
+                 *
+                 * 假设我创建两个consumer，ConsumerGroup是相同的，但一个是集群模式，一个是广播模式。
+                 * 从这里来看，集群模式的consumer的InstanceName将被变更为pid
+                 * 广播模式的consumer的instanceName仍然是default
+                 * 这两个consumer属于不同的MQClientInstance。
+                 * 因此两个consumer创建后注册到不同的MQClientInstance
+                 */
                 if (this.defaultMQPullConsumer.getMessageModel() == MessageModel.CLUSTERING) {
                     this.defaultMQPullConsumer.changeInstanceNameToPID();
                 }
@@ -640,6 +691,8 @@ public class DefaultMQPullConsumerImpl implements MQConsumerInner {
                 this.rebalanceImpl.setMessageModel(this.defaultMQPullConsumer.getMessageModel());
                 this.rebalanceImpl.setAllocateMessageQueueStrategy(this.defaultMQPullConsumer.getAllocateMessageQueueStrategy());
                 this.rebalanceImpl.setmQClientFactory(this.mQClientFactory);
+
+
 
                 this.pullAPIWrapper = new PullAPIWrapper(
                     mQClientFactory,
@@ -664,6 +717,9 @@ public class DefaultMQPullConsumerImpl implements MQConsumerInner {
 
                 this.offsetStore.load();
 
+                /**
+                 * 这里将 DefaultMQPullConsumerImpl对象 注册到MQClientInstance的consumerTable中
+                 */
                 boolean registerOK = mQClientFactory.registerConsumer(this.defaultMQPullConsumer.getConsumerGroup(), this);
                 if (!registerOK) {
                     this.serviceState = ServiceState.CREATE_JUST;

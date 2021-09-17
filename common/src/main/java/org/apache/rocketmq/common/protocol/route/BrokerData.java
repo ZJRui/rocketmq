@@ -26,6 +26,11 @@ import org.apache.rocketmq.common.MixAll;
 public class BrokerData implements Comparable<BrokerData> {
     private String cluster;
     private String brokerName;
+    /**
+     * 多个Broker组成一个集群，BrokerName由相同的多台Broker组成Master-slave架构，brokerId为0代表master，大于0代表Slave。
+     *      *
+     *      * 也就是说一个BrokerName 可以有多个Broker节点，这些节点的brokerName是相同的，但是brokerId是不同的，因此我们在BrokerData中看到了brokerAddrs结构
+     */
     private HashMap<Long/* brokerId */, String/* broker address */> brokerAddrs;
 
     private final Random random = new Random();
@@ -43,7 +48,7 @@ public class BrokerData implements Comparable<BrokerData> {
     /**
      * Selects a (preferably master) broker address from the registered list.
      * If the master's address cannot be found, a slave broker address is selected in a random manner.
-     *
+     *从注册列表中选择一个(最好是主)代理地址。如果找不到主代理地址，则随机选择从代理地址。
      * @return Broker address.
      */
     public String selectBrokerAddr() {

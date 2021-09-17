@@ -35,6 +35,12 @@ public class ResponseFuture {
     private final SemaphoreReleaseOnlyOnce once;
 
     private final AtomicBoolean executeCallbackOnlyOnce = new AtomicBoolean(false);
+    /**
+     *
+     // 注意这个waitResponse方法是ResponseFuture对象中的方法，在waitResponse方法内 会调用countDownLatch await阻塞当前发送线程。
+     //同时 ResponseFuture对象的 responseCommand属性 会在 netty接收到响应的时候在netty线程中 将响应中的数据更新到属性responseCommand中
+     //所以ResponseFuture中的responseCommand属性存在多线程并发共享，需要使用volatile
+     */
     private volatile RemotingCommand responseCommand;
     private volatile boolean sendRequestOK = true;
     private volatile Throwable cause;
@@ -67,6 +73,15 @@ public class ResponseFuture {
         return diff > this.timeoutMillis;
     }
 
+    /**
+     *
+     // 注意这个waitResponse方法是ResponseFuture对象中的方法，在waitResponse方法内 会调用countDownLatch await阻塞当前发送线程。
+     //同时 ResponseFuture对象的 responseCommand属性 会在 netty接收到响应的时候在netty线程中 将响应中的数据更新到属性responseCommand中
+     //所以ResponseFuture中的responseCommand属性存在多线程并发共享，需要使用volatile
+     * @param timeoutMillis
+     * @return
+     * @throws InterruptedException
+     */
     public RemotingCommand waitResponse(final long timeoutMillis) throws InterruptedException {
         this.countDownLatch.await(timeoutMillis, TimeUnit.MILLISECONDS);
         return this.responseCommand;

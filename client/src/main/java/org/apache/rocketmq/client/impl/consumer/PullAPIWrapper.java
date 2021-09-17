@@ -139,7 +139,20 @@ public class PullAPIWrapper {
             }
         }
     }
-
+    /**
+     * MessageQueue :从哪个消息消费队列拉取消息
+     * subExpression：消息过滤表达式
+     * expressionType:消息表达式类型，tag 、sql92
+     * offset：消息拉取偏移量
+     * maxNums:本次拉取最大消息条数，默认为32
+     * sysFlag:拉取系统标记
+     * commitoffset：当前MessageQueue的消费进度（内存中的）
+     * brokerSuspendMaxTimeMillis：消息拉取过程中允许Broker挂起时间，默认为15秒
+     * timeOutMillis：消息拉取超时时间
+     * communicationModel:消息拉取模式，默认为异步拉球
+     * pullCallback：从broker拉取到消息后的回调方法
+     *
+     */
     public PullResult pullKernelImpl(
         final MessageQueue mq,
         final String subExpression,
@@ -154,6 +167,10 @@ public class PullAPIWrapper {
         final CommunicationMode communicationMode,
         final PullCallback pullCallback
     ) throws MQClientException, RemotingException, MQBrokerException, InterruptedException {
+        /**
+         * 根据BrokerName brokerId 从MQClientInstance中获取Broker地址，在整个RocketMQ broker的部署结构中，相同名称的Broker构成主从结构。其brokerId会不一样。
+         * 在每次拉取消息后，会给出下一个建议，下次拉取从主节点还是从节点拉取
+         */
         FindBrokerResult findBrokerResult =
             this.mQClientFactory.findBrokerAddressInSubscribe(mq.getBrokerName(),
                 this.recalculatePullFromWhichNode(mq), false);
@@ -192,6 +209,10 @@ public class PullAPIWrapper {
             requestHeader.setSubVersion(subVersion);
             requestHeader.setExpressionType(expressionType);
 
+            /**
+             *  如果消息过滤模式为类过滤，则需要根据主题名称，broker地址找到注册在Broker上的filterServer，从filterServer上拉取消息，否则从Broker上拉取消息。
+             *
+             */
             String brokerAddr = findBrokerResult.getBrokerAddr();
             if (PullSysFlag.hasClassFilterFlag(sysFlagInner)) {
                 brokerAddr = computePullFromWhichFilterServer(mq.getTopic(), brokerAddr);

@@ -193,6 +193,19 @@ public class ConsumeMessageOrderlyService implements ConsumeMessageService {
         return result;
     }
 
+    /**
+     *
+     *  PullMessageService 负责对消息队列进行消息拉取，从远端服务器
+     * 拉取消息后将消息存入 Proc巳 ssQueue 消息队列处理队列中，然后调用 Consum 巳Message Ser-
+     * vice#submitConsumeRequest 方法进行消息消费，使用线程池来消费消息，确保了消息拉取
+     * 与消息消费的解祸
+     *
+     *
+     * @param msgs
+     * @param processQueue
+     * @param messageQueue
+     * @param dispathToConsume
+     */
     @Override
     public void submitConsumeRequest(
         final List<MessageExt> msgs,

@@ -34,6 +34,15 @@ public class PullRequestHoldService extends ServiceThread {
     private static final String TOPIC_QUEUEID_SEPARATOR = "@";
     private final BrokerController brokerController;
     private final SystemClock systemClock = new SystemClock();
+    /**
+     *
+     * 根据 消 息 主题与消息 队 列 构 建 k巳y ， 从 ConcurrentMap < String / * topic@queueld  叫，
+     * ManyPullRequest> pul!Requ 巳 stTable 中 获 取该 主题＠ 队列对应的 ManyPul!Request ，通过
+     * ConcurrentMap 的并发特性 ，维护 主题＠ 队列的 ManyPu I !Request ， 然后将 Pul!Request 放
+     * 入 ManyPullR巳quest 。 ManyPul!Request 对象 内部持有一个 Pull Request 列表，表示 同 一主题
+     * ＠ 队列的累积拉取消息任务 。
+     *
+     */
     private ConcurrentMap<String/* topic@queueId */, ManyPullRequest> pullRequestTable =
         new ConcurrentHashMap<String, ManyPullRequest>(1024);
 
@@ -68,13 +77,40 @@ public class PullRequestHoldService extends ServiceThread {
         log.info("{} service started", this.getServiceName());
         while (!this.isStopped()) {
             try {
+                /**
+                 *    * RocketMQ 轮询机制由 两个线程共 同来完成。
+                 *      * 1 )  PullRequestHoldService ： 每隔 Ss 重试一次。
+                 *      * 2 ) DefaultMessageStore #ReputMessageService ， 每处理一次重新拉取， Thread.sleep ( 1 ),
+                 *      * 继续下一次检查 。
+                 *      *
+                 *
+                 *      =================
+                 *      如果当开启了长轮询机制 ， PullRequestHoldServic e 线程会每隔 5s 被唤醒去
+                 * 尝试检测是否有新消 息 的 到来直到超时 ， 如果被挂起， 需要等待 缸 ，消息拉取实 时性比较
+                 * 差 ，为了避免这种情况 ， RocketMQ 引 入另外一种机制： 当 消息到达时唤醒挂起线程触发一
+                 * 次检查  也就是DefaultMessageStore 内的ReputMessageService
+                 *
+                 *
+                 *
+                 */
                 if (this.brokerController.getBrokerConfig().isLongPollingEnable()) {
+                    /**
+                     * 如果开启长轮训，则每5s尝试一次，判断新消息是否到达
+                     */
                     this.waitForRunning(5 * 1000);
                 } else {
+                    /**
+                     *  如果未开启长轮询，则默
+                     * 认等待 ls 再次尝试，可以通过 BrokerConfig#shortPollingTimeMills 改变等待时间 。
+                     */
                     this.waitForRunning(this.brokerController.getBrokerConfig().getShortPollingTimeMills());
                 }
 
                 long beginLockTimestamp = this.systemClock.now();
+                /**
+                 * 检查是否有新的消息到来
+                 *
+                 */
                 this.checkHoldRequest();
                 long costTime = this.systemClock.now() - beginLockTimestamp;
                 if (costTime > 5 * 1000) {
@@ -94,6 +130,10 @@ public class PullRequestHoldService extends ServiceThread {
     }
 
     private void checkHoldRequest() {
+        /**
+         * 遍历拉取任务表，根据主题与队列获取消息消费队列最大偏移量，如果该偏移量大于
+         * 待拉取偏移量， 说明有新的消息到达，调用 notifyMessageArriving 触发消息拉取。
+         */
         for (String key : this.pullRequestTable.keySet()) {
             String[] kArray = key.split(TOPIC_QUEUEID_SEPARATOR);
             if (2 == kArray.length) {
@@ -116,8 +156,14 @@ public class PullRequestHoldService extends ServiceThread {
     public void notifyMessageArriving(final String topic, final int queueId, final long maxOffset, final Long tagsCode,
         long msgStoreTime, byte[] filterBitMap, Map<String, String> properties) {
         String key = this.buildKey(topic, queueId);
+        /**
+         * 首先从 ManyPullRequest 中 获取当前该主题、队列所有的挂起拉取任务。
+         */
         ManyPullRequest mpr = this.pullRequestTable.get(key);
         if (mpr != null) {
+            /**
+             * 这里clone方法是一个synchronized方法
+             */
             List<PullRequest> requestList = mpr.cloneListAndClear();
             if (requestList != null) {
                 List<PullRequest> replayList = new ArrayList<PullRequest>();
@@ -128,6 +174,10 @@ public class PullRequestHoldService extends ServiceThread {
                         newestOffset = this.brokerController.getMessageStore().getMaxOffsetInQueue(topic, queueId);
                     }
 
+                    /**
+                     * 如果消 息队列的最大偏移量大于待拉取偏移量 ，如果消息匹配则 调用 executeRequestWhenWakeup  将消息返回 给消息拉取客户 端，否则等待下一次尝试。
+                     * 这个诶性ecuteRequestWhenWakeUp 会调用  PullMessageProcessor.this.processRequest
+                     */
                     if (newestOffset > request.getPullFromThisOffset()) {
                         boolean match = request.getMessageFilter().isMatchedByConsumeQueue(tagsCode,
                             new ConsumeQueueExt.CqExtUnit(tagsCode, msgStoreTime, filterBitMap));
@@ -138,6 +188,9 @@ public class PullRequestHoldService extends ServiceThread {
 
                         if (match) {
                             try {
+                                /**
+                                 * 如果发现有新的消息到来 则将 数据 写回给ConsumerClient， 具体的写回操作是创建了一个Runnable，然后将Runnable提交到线程池中执行
+                                 */
                                 this.brokerController.getPullMessageProcessor().executeRequestWhenWakeup(request.getClientChannel(),
                                     request.getRequestCommand());
                             } catch (Throwable e) {
@@ -147,6 +200,9 @@ public class PullRequestHoldService extends ServiceThread {
                         }
                     }
 
+                    /**
+                     * ：如果挂起超时时间超时 ， 则不继续等待将直接返回客户消息未找到 。  这个诶性ecuteRequestWhenWakeUp 会调用  PullMessageProcessor.this.processRequest
+                     */
                     if (System.currentTimeMillis() >= (request.getSuspendTimestamp() + request.getTimeoutMillis())) {
                         try {
                             this.brokerController.getPullMessageProcessor().executeRequestWhenWakeup(request.getClientChannel(),

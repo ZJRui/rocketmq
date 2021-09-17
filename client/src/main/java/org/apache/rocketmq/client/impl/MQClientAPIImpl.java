@@ -281,6 +281,9 @@ public class MQClientAPIImpl {
 
         RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.UPDATE_AND_CREATE_TOPIC, requestHeader);
 
+        /**
+         * invokeSync中指定了地址addr，该地址是某一个BrokerName的master地址
+         */
         RemotingCommand response = this.remotingClient.invokeSync(MixAll.brokerVIPChannel(this.clientConfig.isVipChannelEnabled(), addr),
             request, timeoutMillis);
         assert response != null;
@@ -461,6 +464,11 @@ public class MQClientAPIImpl {
                 SendMessageRequestHeaderV2 requestHeaderV2 = SendMessageRequestHeaderV2.createSendMessageRequestHeaderV2(requestHeader);
                 request = RemotingCommand.createRequestCommand(msg instanceof MessageBatch ? RequestCode.SEND_BATCH_MESSAGE : RequestCode.SEND_MESSAGE_V2, requestHeaderV2);
             } else {
+                /**
+                 * MQ 客 户端发送消 息 的入口 是 MQClientAPIImpl#sendMessage 。 请 求命令是 Request­
+                 * Code.SEND_MESSAGE， 我们可以找到该命令的处理类： org . apache.rocketmq. broker. processor.
+                 * SendMessageProcessor 。 人口方法在 SendMessageProcessor# sendMessage 。
+                 */
                 request = RemotingCommand.createRequestCommand(RequestCode.SEND_MESSAGE, requestHeader);
             }
         }
@@ -468,9 +476,24 @@ public class MQClientAPIImpl {
 
         switch (communicationMode) {
             case ONEWAY:
+                /**
+                 * 单 向发送是指消息生产者调用消息发送的 API 后 ，无须等待消息服务器返回本次消息
+                 * 发送结果，并且无须提供回调函数，表示消息发送压根就不关心本次消息发送是否成功，
+                 * 其实现原理与异步消息发送相同，只是消息发送客户端在收到响应结果后什么都不做而已，
+                 * 并且没有重试机制 。
+                 */
                 this.remotingClient.invokeOneway(addr, request, timeoutMillis);
                 return null;
             case ASYNC:
+                /**
+                 * 消息异步发送是指消息生产者调用发送的 API 后，无须阻塞等待消息服务器返回本次
+                 * 消息发送结果，只需要提供一个回调函数，供消息发送客户端在收到响应结果回调 。 异步方
+                 * 式相比同步方式，消息发送端的发送性能会显著提高，但为了保护消息服务器的负载压力，
+                 * RocketMQ 对消息发送的异步消息进行了井发控制，通过参数 clientAsyncSemaphoreValue
+                 * 来控制，默认为 65535 。 异步消息发送虽然也可以通过 DefaultMQProducer#retryTimes ­
+                 * WhenSendAsyncFailed 属性来控制消息重试次数，但是重试的调用人 口 是在 收到服务端响
+                 * 应包时进行的，如果出现网络异常、网络超时等将不会重试。
+                 */
                 final AtomicInteger times = new AtomicInteger();
                 long costTimeAsync = System.currentTimeMillis() - beginStartTime;
                 if (timeoutMillis < costTimeAsync) {
@@ -536,6 +559,31 @@ public class MQClientAPIImpl {
                     } catch (Throwable e) {
                     }
 
+                    /**
+                     *           * broker故障延迟机制：
+                     *                          * 在不启用故障延迟的情况下会有什么问题呢？ 发送消息的时候我们需要选择一个MessageQueue，如果因为Broker宕机导致第一次发送失败了，
+                     *                          * 那么第二次选择MessageQueue的时候要规避同一个Broker的MessageQueue。 在RocketMQ的 selectOneMessageQueue(lastBrokerName);
+                     *                          * 方法中进行选择MessageQueue，其中参数lastBrokerName表示上一次发送失败的BrokerName，因此第一次发送的时候为null,
+                     *                          * 第二次发送的时候为第一次发送失败的MessageQueue所在的BrokerName， 如果第二次发送失败了，那么我们第三次选择的时候
+                     *                          * lastBrokerName就是第二法发送失败的BrokerName，那么这个时候第三次选择MessageQueue的过程中无法规避选中第一次发送失败的BrokerName的MessageQueue。
+                     *                          *
+                     *                          * 消息发送很有可能会失败，再次引发重试，带来不必要的性能损耗，那么有什么方法在一次消息发送失败后，暂时将该 Broker 排除在消息队列选择范围外呢？
+                     *
+                     *                          * 或许有朋友会问， Broker 不可用后 ，路由信息中为什么还会包含该 Brok町的路由信息呢？其实这不难解释：首先，
+                     *                          * NameServer 检测 Broker 是否可用是有延迟的，最短为一次心跳检测间 隔（ 1 0s ）； 其次， NameServer 不会检测到 Broker
+                     *                          * 岩机后马上推送消息给消息生产者，而是消息生产者每隔 30s 更新一次路由信息，所以消息生产者最快感知 Broker 最新的路由信息也需要 30s 。
+                     *                          * 如果能引人一种机制，在 Broker 若机期间，如果一次消息发送失败后，可以将该 Broker 暂时排除在消息队列的选择范围中 。
+                     *                          *
+                     *                          * 消息发送失败的时候创建一条失败记录， 指定broker名称，本次消息发送延迟时间（本次消息失败时的时间减去发送前开始时间）
+                     *                          * 第三个参数isolation 表示是否隔离，该参数的含义如果为true，则使用默认时长30s来计算broker故障规避时长；如果为false，则使用本次消息发送
+                     *                          * 延迟时间来计算Broker故障规避时长。
+                     *                          *
+                     *                          * 故障延迟机制的原理就是：消息发送失败的是时候 创建一条发送失败记录，记录broker和故障延迟时间，指定该broker在未来的故
+                     *                          * 障延迟时间内不能发送消息。这个故障延迟时间 可以使用固定的30秒，也可以根据消息发送开始时间到消息发送失败时的差值时间 来计
+                     *                          * 算一个时间作为故障延迟时间，差值时间越大计算得到的故障延迟时间越大，故障延迟时间就是broker要规避 的时长。接下来多久的时间内该 Broker 将不
+                     *                          * 参与消息发送队列负载。此时消息发送时会顺序选择MessageQueue，然后判断这个MessageQueue是否可用，判断的依据就是根据发送失败记录。
+                     *                          *
+                     */
                     producer.updateFaultItem(brokerName, System.currentTimeMillis() - responseFuture.getBeginTimestamp(), false);
                     return;
                 }
@@ -599,6 +647,10 @@ public class MQClientAPIImpl {
         if (needRetry && tmp <= timesTotal) {
             String retryBrokerName = brokerName;//by default, it will send to the same broker
             if (topicPublishInfo != null) { //select one message queue accordingly, in order to determine which broker to send
+                /**
+                 *
+                 * 异步重试机制在收到消息发送结构后执行回调之前进行重试
+                 */
                 MessageQueue mqChosen = producer.selectOneMessageQueue(topicPublishInfo, brokerName);
                 retryBrokerName = mqChosen.getBrokerName();
             }
@@ -613,6 +665,31 @@ public class MQClientAPIImpl {
                 onExceptionImpl(retryBrokerName, msg, timeoutMillis, request, sendCallback, topicPublishInfo, instance, timesTotal, curTimes, e1,
                     context, false, producer);
             } catch (RemotingConnectException e1) {
+                /**
+                 *           * broker故障延迟机制：
+                 *                          * 在不启用故障延迟的情况下会有什么问题呢？ 发送消息的时候我们需要选择一个MessageQueue，如果因为Broker宕机导致第一次发送失败了，
+                 *                          * 那么第二次选择MessageQueue的时候要规避同一个Broker的MessageQueue。 在RocketMQ的 selectOneMessageQueue(lastBrokerName);
+                 *                          * 方法中进行选择MessageQueue，其中参数lastBrokerName表示上一次发送失败的BrokerName，因此第一次发送的时候为null,
+                 *                          * 第二次发送的时候为第一次发送失败的MessageQueue所在的BrokerName， 如果第二次发送失败了，那么我们第三次选择的时候
+                 *                          * lastBrokerName就是第二法发送失败的BrokerName，那么这个时候第三次选择MessageQueue的过程中无法规避选中第一次发送失败的BrokerName的MessageQueue。
+                 *                          *
+                 *                          * 消息发送很有可能会失败，再次引发重试，带来不必要的性能损耗，那么有什么方法在一次消息发送失败后，暂时将该 Broker 排除在消息队列选择范围外呢？
+                 *
+                 *                          * 或许有朋友会问， Broker 不可用后 ，路由信息中为什么还会包含该 Brok町的路由信息呢？其实这不难解释：首先，
+                 *                          * NameServer 检测 Broker 是否可用是有延迟的，最短为一次心跳检测间 隔（ 1 0s ）； 其次， NameServer 不会检测到 Broker
+                 *                          * 岩机后马上推送消息给消息生产者，而是消息生产者每隔 30s 更新一次路由信息，所以消息生产者最快感知 Broker 最新的路由信息也需要 30s 。
+                 *                          * 如果能引人一种机制，在 Broker 若机期间，如果一次消息发送失败后，可以将该 Broker 暂时排除在消息队列的选择范围中 。
+                 *                          *
+                 *                          * 消息发送失败的时候创建一条失败记录， 指定broker名称，本次消息发送延迟时间（本次消息失败时的时间减去发送前开始时间）
+                 *                          * 第三个参数isolation 表示是否隔离，该参数的含义如果为true，则使用默认时长30s来计算broker故障规避时长；如果为false，则使用本次消息发送
+                 *                          * 延迟时间来计算Broker故障规避时长。
+                 *                          *
+                 *                          * 故障延迟机制的原理就是：消息发送失败的是时候 创建一条发送失败记录，记录broker和故障延迟时间，指定该broker在未来的故
+                 *                          * 障延迟时间内不能发送消息。这个故障延迟时间 可以使用固定的30秒，也可以根据消息发送开始时间到消息发送失败时的差值时间 来计
+                 *                          * 算一个时间作为故障延迟时间，差值时间越大计算得到的故障延迟时间越大，故障延迟时间就是broker要规避 的时长。接下来多久的时间内该 Broker 将不
+                 *                          * 参与消息发送队列负载。此时消息发送时会顺序选择MessageQueue，然后判断这个MessageQueue是否可用，判断的依据就是根据发送失败记录。
+                 *                          *
+                 */
                 producer.updateFaultItem(brokerName, 3000, true);
                 onExceptionImpl(retryBrokerName, msg, timeoutMillis, request, sendCallback, topicPublishInfo, instance, timesTotal, curTimes, e1,
                     context, true, producer);
@@ -711,6 +788,9 @@ public class MQClientAPIImpl {
         final CommunicationMode communicationMode,
         final PullCallback pullCallback
     ) throws RemotingException, MQBrokerException, InterruptedException {
+        /**
+         * 这里指定 pull请求的 code 为pull_message
+         */
         RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.PULL_MESSAGE, requestHeader);
 
         switch (communicationMode) {
@@ -718,9 +798,16 @@ public class MQClientAPIImpl {
                 assert false;
                 return null;
             case ASYNC:
+                /**
+                 * 注意如果是异步模式的时候 我们才需要传递一个PullCallback， 然后当收到结果的时候就会回调PullCallback的onSuccess方法
+                 */
                 this.pullMessageAsync(addr, request, timeoutMillis, pullCallback);
                 return null;
             case SYNC:
+                /**
+                 * 如果是同步模式，在这里的pullMessageSync方法中 会 首先发送请求
+                 * 然后执行processPullResponse方法返回处理结果
+                 */
                 return this.pullMessageSync(addr, request, timeoutMillis);
             default:
                 assert false;
@@ -767,8 +854,14 @@ public class MQClientAPIImpl {
         final RemotingCommand request,
         final long timeoutMillis
     ) throws RemotingException, InterruptedException, MQBrokerException {
+        /**
+         * 发送message 并等待结果
+         */
         RemotingCommand response = this.remotingClient.invokeSync(addr, request, timeoutMillis);
         assert response != null;
+        /**
+         * 处理结果并返回
+         */
         return this.processPullResponse(response, addr);
     }
 
@@ -797,6 +890,10 @@ public class MQClientAPIImpl {
         PullMessageResponseHeader responseHeader =
             (PullMessageResponseHeader) response.decodeCommandCustomHeader(PullMessageResponseHeader.class);
 
+        /**
+         * 根据响应结果解码成PullResultExt对象，此时只是从网络中读取消息列表到byte[] messageBinary属性
+         *
+         */
         return new PullResultExt(pullStatus, responseHeader.getNextBeginOffset(), responseHeader.getMinOffset(),
             responseHeader.getMaxOffset(), null, responseHeader.getSuggestWhichBrokerId(), response.getBody());
     }
@@ -883,6 +980,9 @@ public class MQClientAPIImpl {
         MQBrokerException, InterruptedException {
         GetConsumerListByGroupRequestHeader requestHeader = new GetConsumerListByGroupRequestHeader();
         requestHeader.setConsumerGroup(consumerGroup);
+        /**
+         * getConsumerByGroup
+         */
         RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.GET_CONSUMER_LIST_BY_GROUP, requestHeader);
 
         RemotingCommand response = this.remotingClient.invokeSync(MixAll.brokerVIPChannel(this.clientConfig.isVipChannelEnabled(), addr),
@@ -1089,6 +1189,24 @@ public class MQClientAPIImpl {
         return response.getCode() == ResponseCode.SUCCESS;
     }
 
+    /**
+     *
+     *消息交给MessageListener处理完成之后要对消费结果进行处理：ConsumeMessageConcurrentlyService#processConsumeResult
+     *
+     * 如果消息监听器返回的消费结果为 RECONSUME LATER ，则需要将这些消息发送
+     * 给 Broker 延迟消息 。 如果发送 ACK 消息失败，将延迟 Ss 后提交线程池进行消费。 ACK
+     * 消息发送的网络客户端人口： MQClientAPIImpl#consumerSendMessageBack ，
+     *
+     * @param addr
+     * @param msg
+     * @param consumerGroup
+     * @param delayLevel
+     * @param timeoutMillis
+     * @param maxConsumeRetryTimes
+     * @throws RemotingException
+     * @throws MQBrokerException
+     * @throws InterruptedException
+     */
     public void consumerSendMessageBack(
         final String addr,
         final MessageExt msg,
@@ -1100,11 +1218,31 @@ public class MQClientAPIImpl {
         ConsumerSendMsgBackRequestHeader requestHeader = new ConsumerSendMsgBackRequestHeader();
         RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.CONSUMER_SEND_MSG_BACK, requestHeader);
 
+        /**
+         * ：消费组名 。
+         */
         requestHeader.setGroup(consumerGroup);
+        /**
+         * ：消息主题。
+         */
         requestHeader.setOriginTopic(msg.getTopic());
+        /**
+         * 消息物理偏移量
+         */
         requestHeader.setOffset(msg.getCommitLogOffset());
+        /**
+         * ：延迟级别， RcketMQ 不支持精确的定时消息调度，而是提供几个延时
+         * 级别， Messages toreConfig# messageD巳 layLevel = ” ls Ss  10s 30s  lm 2m  3m 4m Sm  6m 7m 8m
+         * 9m  lOm 20m 30m lh 2h ”，如果 delayLevel= I 表示延迟缸，delayLevel=2 则表示延迟 1 Os 。
+         */
         requestHeader.setDelayLevel(delayLevel);
+        /**
+         * 消息 ID 。
+         */
         requestHeader.setOriginMsgId(msg.getMsgId());
+        /**
+         *  最大重新消费次数，默认为 16 次。
+         */
         requestHeader.setMaxReconsumeTimes(maxConsumeRetryTimes);
 
         RemotingCommand response = this.remotingClient.invokeSync(MixAll.brokerVIPChannel(this.clientConfig.isVipChannelEnabled(), addr),
@@ -1349,23 +1487,64 @@ public class MQClientAPIImpl {
         return getTopicRouteInfoFromNameServer(topic, timeoutMillis, false);
     }
 
+    /***
+     *
+     *   *  RocketMQ的路由发现是非实时的，当Topic路由出现变化后，nameServer不主动推送给客户端，而是由客户端定时拉取最新的路由。（注意是定时拉取最新的路由，也就是consumer和Producer存在定时任务）
+     *      *  MQClientInstance 中会创建定时任务
+     *
+     * @param topic
+     * @param timeoutMillis
+     * @return
+     * @throws RemotingException
+     * @throws MQClientException
+     * @throws InterruptedException
+     */
     public TopicRouteData getTopicRouteInfoFromNameServer(final String topic, final long timeoutMillis)
         throws RemotingException, MQClientException, InterruptedException {
 
+        /**
+         * 这里最后一个参数是true，表示允许topic不存在
+         */
         return getTopicRouteInfoFromNameServer(topic, timeoutMillis, true);
     }
 
+    /**
+     *  RocketMQ的路由发现是非实时的，当Topic路由出现变化后，nameServer不主动推送给客户端，而是由客户端定时拉取最新的路由。（注意是定时拉取最新的路由，也就是consumer和Producer存在定时任务）
+     *  MQClientInstance 中会创建定时任务
+     * @param topic
+     * @param timeoutMillis
+     * @param allowTopicNotExist
+     * @return
+     * @throws MQClientException
+     * @throws InterruptedException
+     * @throws RemotingTimeoutException
+     * @throws RemotingSendRequestException
+     * @throws RemotingConnectException
+     */
     public TopicRouteData getTopicRouteInfoFromNameServer(final String topic, final long timeoutMillis,
         boolean allowTopicNotExist) throws MQClientException, InterruptedException, RemotingTimeoutException, RemotingSendRequestException, RemotingConnectException {
+
+        /**
+         * 请求中设置topic，请求参数非常简单就是 topic参数
+         */
         GetRouteInfoRequestHeader requestHeader = new GetRouteInfoRequestHeader();
         requestHeader.setTopic(topic);
 
+        /**
+         *  RocketMQ的路由发现是非实时的，当Topic路由出现变化后，nameServer不主动推送给客户端，而是由客户端定时拉取最新的路由。（注意是定时拉取最新的路由，也就是consumer和Producer存在定时任务）
+         */
         RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.GET_ROUTEINFO_BY_TOPIC, requestHeader);
 
+        /**
+         * 执行namesrv的 org.apache.rocketmq.namesrv.processor.DefaultRequestProcessor#getRouteInfoByTopic(io.netty.channel.ChannelHandlerContext, org.apache.rocketmq.remoting.protocol.RemotingCommand)
+         */
         RemotingCommand response = this.remotingClient.invokeSync(null, request, timeoutMillis);
         assert response != null;
         switch (response.getCode()) {
             case ResponseCode.TOPIC_NOT_EXIST: {
+                /**
+                 *
+                 */
                 if (allowTopicNotExist) {
                     log.warn("get Topic [{}] RouteInfoFromNameServer is not exist value", topic);
                 }
@@ -1375,12 +1554,18 @@ public class MQClientAPIImpl {
             case ResponseCode.SUCCESS: {
                 byte[] body = response.getBody();
                 if (body != null) {
+                    /**
+                     * topic存在则返回topic的信息
+                     */
                     return TopicRouteData.decode(body, TopicRouteData.class);
                 }
             }
             default:
                 break;
         }
+        /**
+         * topic不存在则 抛出异常
+         */
 
         throw new MQClientException(response.getCode(), response.getRemark());
     }

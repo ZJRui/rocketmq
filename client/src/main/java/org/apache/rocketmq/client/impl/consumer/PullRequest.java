@@ -18,11 +18,33 @@ package org.apache.rocketmq.client.impl.consumer;
 
 import org.apache.rocketmq.common.message.MessageQueue;
 
+/**
+ * PullRequest有两个类：
+ * org.apache.rocketmq.broker.longpolling.PullRequest
+ * org.apache.rocketmq.client.impl.consumer.PullRequest
+ *
+ *
+ * 这里的clinet.consuemr PullRequest是在 哪里创建的？
+ *
+ */
 public class PullRequest {
     private String consumerGroup;
+    /**
+     * 待拉取消费队列
+     */
     private MessageQueue messageQueue;
+    /**
+     * 消息处理队列，从Broker拉取到消息先存入ProcessQueue，然后再提交到消费者消费线程池消费。
+     *
+     */
     private ProcessQueue processQueue;
+    /**
+     * 待拉取的MessageQueue偏移量
+     */
     private long nextOffset;
+    /**
+     * 是否被锁定
+     */
     private boolean lockedFirst = false;
 
     public boolean isLockedFirst() {

@@ -73,8 +73,27 @@ public class NamesrvController {
         this.configuration.setStorePathFromConfig(this.namesrvConfig, "configStorePath");
     }
 
+    /**
+     *
+     * NamesrvStartup.start(NamesrvController)  (org.apache.rocketmq.namesrv)
+     *     NamesrvStartup.main0(String[])  (org.apache.rocketmq.namesrv)
+     *         NamesrvStartup.main(String[])  (org.apache.rocketmq.namesrv)
+     *
+     *  * 这里调用了 initialize方法触发NamesrvController的启动：
+     *          * 1，加载kv配置
+     *          * 2，启动NettyServer
+     *          * 3，开启两个定时任务， 每隔10s扫描一次Broker，移除处于不激活状态的Broker
+     *          * 每隔10s打印一次kv配置
+     *
+     * @return
+     */
     public boolean initialize() {
 
+        /**
+         * 加载 KV 配置，创建 NettyServer 网络处理对象，然后开启两个定 时任务，在 RocketMQ
+         * 中此类定时任务统称为心跳检测 。
+         * 定时任务1：NameServer每隔10秒扫描一次broker，移除处于不激活状态的Broker
+         */
         this.kvConfigManager.load();
 
         this.remotingServer = new NettyRemotingServer(this.nettyServerConfig, this.brokerHousekeepingService);
@@ -84,6 +103,19 @@ public class NamesrvController {
 
         this.registerProcessor();
 
+        /**
+         * 定时任务1：NameServer每隔10秒扫描一次broker，移除处于不激活状态的Broker.
+         *
+         * 注意这里只是移除不激活状态的Broker， 也就是说，不是NameServer发送请求你询问broker是否在线。
+         * 而是Broker节点主动发送请求来保持心跳， Broker发送的请求被处理的逻辑是在outeInfoManager#registerBroker(java.lang.String, java.lang.String, java.lang.String, long, java.lang.String, org.apache.rocketmq.common.protocol.body.TopicConfigSerializeWrapper, java.util.List, io.netty.channel.Channel)
+         * 方法中，在这个registerBroker方法中 ，每收到一个心跳包，就会执行一次brokerLiveTabel的更新，更新 brok erL iveTa ble 中关于 Broker 的状态信息以及路
+         * 由表（ topicQueueTable 、 brokerAddrTab le 、 brokerLi veTa bl e 、 fi lterServerTable ）
+         * 更新上述路由表（HashTable ）使用了锁粒度较少的读写锁，允许多个消息发送者（P roducer ）并发读，
+         * 保证消息发送时的高并发。 但同一时刻 NameServer 只处理一个 Broker 心跳包，多个心跳
+         * 包请求串行执行。 这也是读写锁经典使用场
+         *
+         *
+         */
         this.scheduledExecutorService.scheduleAtFixedRate(new Runnable() {
 
             @Override
@@ -92,6 +124,9 @@ public class NamesrvController {
             }
         }, 5, 10, TimeUnit.SECONDS);
 
+        /**
+         * nameServer 每隔10分分钟打印一次KV配置
+         */
         this.scheduledExecutorService.scheduleAtFixedRate(new Runnable() {
 
             @Override

@@ -395,6 +395,10 @@ public class ConsumeQueue {
                         topic, queueId, request.getCommitLogOffset());
                 }
             }
+            /**
+             * 调用了putMessagePositionInfo（），并引入了重试机制。
+             *
+             */
             boolean result = this.putMessagePositionInfo(request.getCommitLogOffset(),
                 request.getMsgSize(), tagsCode, request.getConsumeQueueOffset());
             if (result) {
@@ -425,11 +429,18 @@ public class ConsumeQueue {
     private boolean putMessagePositionInfo(final long offset, final int size, final long tagsCode,
         final long cqOffset) {
 
+        /**
+         * 1：判断消息是否已经被处理过
+         * maxPhysicOffset记录了上一次ConsumeQueue更新的消息在CommitLog中的偏移量，如果本次消息偏移量小于maxPhysicOffset，则表明消息已经被更新过，直接返回。
+         */
         if (offset + size <= this.maxPhysicOffset) {
             log.warn("Maybe try to build consume queue repeatedly maxPhysicOffset={} phyOffset={}", maxPhysicOffset, offset);
             return true;
         }
 
+        /**
+         * 2：初始存储偏移量所用的内存 这里将消息的偏移量、大小、tagsCode等信息，都暂存到了一块ByteBuffer中。
+         */
         this.byteBufferIndex.flip();
         this.byteBufferIndex.limit(CQ_STORE_UNIT_SIZE);
         this.byteBufferIndex.putLong(offset);
@@ -438,6 +449,13 @@ public class ConsumeQueue {
 
         final long expectLogicOffset = cqOffset * CQ_STORE_UNIT_SIZE;
 
+        /**
+         * 3：获取此次存储消息偏移量所用的MappedFile
+         * 前面我们讲到，ConsumeQueue本身也是采用MappedFileQueue用来存储偏移量的，这里便是获取MappedFileQueue中的最后一个MappedFile，用来存储消息。
+         *
+         * ConsumeQueue 中用来存储消息偏移量的结构大小为 CQ_STORE_UNIT_SIZE，为20个字节，cqOffse t为 ConsumeQueue 中已经记录了多少条消息的偏移量，所以 expectLogicOffset 即为当前需要存储的消息偏移量结构，在ConsumeQueue的MappedFileQueue中的位置。
+         *
+         */
         MappedFile mappedFile = this.mappedFileQueue.getLastMappedFile(expectLogicOffset);
         if (mappedFile != null) {
 
@@ -470,6 +488,19 @@ public class ConsumeQueue {
                     );
                 }
             }
+            /**
+             * 4：更新maxPhysicOffset，并将暂存在ByteBuffer中的消息偏移信息，追加到MappedFile中。 此时，消息偏移量就被成功存储到ConsumeQueue中了。
+             *
+             * 通过上面的分析，我们知道了ConsumeQueue的作用及更新流程，总结来说，它就是用来记录消息在CommitLog中偏移量的，便于Consumer快速定位消息。
+             *
+             * 消息偏移量的更新分为下面几步：
+             *
+             * 1：ReputMessageService不断从CommitLog中查询是否有新存储的消息；
+             *
+             * 2：如果有新消息，便通过Dispatcher通知ConsumeQueue；
+             *
+             * 3：ConsumeQueue收到通知后会将消息偏移量存储到自身的MappedFile中
+             */
             this.maxPhysicOffset = offset + size;
             return mappedFile.appendMessage(this.byteBufferIndex.array());
         }

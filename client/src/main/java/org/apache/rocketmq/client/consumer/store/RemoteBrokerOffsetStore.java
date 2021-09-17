@@ -38,6 +38,22 @@ import org.apache.rocketmq.remoting.exception.RemotingException;
 
 /**
  * Remote storage implementation
+ *
+ * 集群模式消息进度存储文件存放在消息服务端 B roker 。
+ *
+ *
+ * 消息消费进度的读取，持久化与广播模式实现细节差不多，集群模式消息进度如果从内
+ * 存中读取消费进度，则从 RemoteBrokerOffsetStore 的 ConcurrentMap<MessageQueue, Atomic-
+ * Long> offsetTable =new  ConcurrentHashMap<Messag巳Qu巳ue, AtomicLong＞（）中根据消息消费队
+ * 列获取其消息消费进度；如果从磁盘读取，则发送网络请求，请求命令为 QUERY_
+ * CONSUMER  OFFSET 。 持久化消息进度，则请求命令为 UPDATE CONSUMER  OFFSET,
+ * 更新 Cons u merOffsetManag 町的 ConcurrentMap<Str i ng/* topic@gro up 町， ConcurrentMap<
+ * Integer／ ＊消息队列 ID 灯， Long/ ＊消息消费进度＊／》 offsetTable, Broker 端默认 10s 持久化一次
+ * 消息进度，存储文件名：$ {RocketMQ_ HOME }/store/config/consumerOffset.json 。
+ *
+ *消息消费进度的存储，广播模式与消费组无关，集群模式下以主题与消费组为键保存
+ * 该主题所有队列的消费进度
+ *
  */
 public class RemoteBrokerOffsetStore implements OffsetStore {
     private final static InternalLogger log = ClientLogger.getLog();
@@ -113,6 +129,11 @@ public class RemoteBrokerOffsetStore implements OffsetStore {
 
     @Override
     public void persistAll(Set<MessageQueue> mqs) {
+        /**
+         * 消息消费进度的存储，广播模式与消费组无关，集群模式下以主题与消费组为键保存
+         * 该主题所有队列的消费进度
+         *
+         */
         if (null == mqs || mqs.isEmpty())
             return;
 
@@ -149,6 +170,11 @@ public class RemoteBrokerOffsetStore implements OffsetStore {
 
     @Override
     public void persist(MessageQueue mq) {
+        /**
+         * 获取该MessageQueue的消费位移
+         * 集群模式中每一个MessageQueue只有一个Consumer消费。
+         *
+         */
         AtomicLong offset = this.offsetTable.get(mq);
         if (offset != null) {
             try {
@@ -187,6 +213,7 @@ public class RemoteBrokerOffsetStore implements OffsetStore {
 
     /**
      * Update the Consumer Offset in one way, once the Master is off, updated to Slave, here need to be optimized.
+     * 用一种方式更新消费者的偏移量，一旦主服务器关闭，更新到从服务器，这里需要优化。
      */
     private void updateConsumeOffsetToBroker(MessageQueue mq, long offset) throws RemotingException,
         MQBrokerException, InterruptedException, MQClientException {
@@ -195,15 +222,20 @@ public class RemoteBrokerOffsetStore implements OffsetStore {
 
     /**
      * Update the Consumer Offset synchronously, once the Master is off, updated to Slave, here need to be optimized.
+     * 用一种方式更新消费者的偏移量，一旦主服务器关闭，更新到从服务器，这里需要优化。
      */
     @Override
     public void updateConsumeOffsetToBroker(MessageQueue mq, long offset, boolean isOneway) throws RemotingException,
         MQBrokerException, InterruptedException, MQClientException {
+        /**
+         * 根据brokerName找到一个Broker地址，可以是master或者slave，然后将位移发送给他
+         */
         FindBrokerResult findBrokerResult = this.mQClientFactory.findBrokerAddressInAdmin(mq.getBrokerName());
         if (null == findBrokerResult) {
             this.mQClientFactory.updateTopicRouteInfoFromNameServer(mq.getTopic());
             findBrokerResult = this.mQClientFactory.findBrokerAddressInAdmin(mq.getBrokerName());
         }
+
 
         if (findBrokerResult != null) {
             UpdateConsumerOffsetRequestHeader requestHeader = new UpdateConsumerOffsetRequestHeader();

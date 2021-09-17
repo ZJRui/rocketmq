@@ -40,6 +40,7 @@ import org.apache.rocketmq.common.topic.TopicValidator;
 import org.apache.rocketmq.logging.InternalLogger;
 import org.apache.rocketmq.logging.InternalLoggerFactory;
 
+
 public class TopicConfigManager extends ConfigManager {
     private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.BROKER_LOGGER_NAME);
     private static final long LOCK_TIMEOUT_MILLIS = 3000;
@@ -355,6 +356,9 @@ public class TopicConfigManager extends ConfigManager {
     }
 
     public void updateTopicConfig(final TopicConfig topicConfig) {
+        /**
+         * broker节点创建topic的逻辑就是这里，如果之前topicConfigTable 中没有则就是创建
+         */
         TopicConfig old = this.topicConfigTable.put(topicConfig.getTopicName(), topicConfig);
         if (old != null) {
             log.info("update topic config, old:[{}] new:[{}]", old, topicConfig);
@@ -364,6 +368,9 @@ public class TopicConfigManager extends ConfigManager {
 
         this.dataVersion.nextVersion();
 
+        /**
+         * 对topicConfigTable持久化
+         */
         this.persist();
     }
 
@@ -420,7 +427,23 @@ public class TopicConfigManager extends ConfigManager {
         }
     }
 
+    /**
+     * topicConfigWrapper , 主题配置， t opicConfigWrapper 内部 封装的是 Top icConfig­
+     * Manager 中的 topicConfigTable ，内部存储的是 Broker 启动时默认的 一些 Topic,
+     * MixAll. SELF  TEST_ TOPIC 、 MixAll.DEFAULT一TOPIC ( AutoCreateTopic-
+     * Enable=true ).,  MixAll.BENCHMARK  TOPIC 、 MixAll.OFFSET MOVED
+     * EVENT 、 BrokerConfig#brokerClusterName 、 BrokerConfig#brokerName 。 Broker
+     * 中 Topic 默认存储在$｛Rock巳t一Hom巳｝ ／ store / confg/topic. on 中 。
+     *
+     * @return
+     */
     public TopicConfigSerializeWrapper buildTopicConfigSerializeWrapper() {
+        /**
+         * TopicConfigWrapper 内部封装的是topicConfigManager中的topicConfigTable,内存存储的是Broker启动时默认的一些Topic,MixAll.self_test_topic
+         * mixAll.default_topic (AutoCreateTopicEnable=true)
+         *
+         * Broker中topic默认存储在${rokcet_home}/store/config/topic.json中
+         */
         TopicConfigSerializeWrapper topicConfigSerializeWrapper = new TopicConfigSerializeWrapper();
         topicConfigSerializeWrapper.setTopicConfigTable(this.topicConfigTable);
         topicConfigSerializeWrapper.setDataVersion(this.dataVersion);
