@@ -171,7 +171,7 @@ public class NettyRemotingClient extends NettyRemotingAbstract implements Remoti
                                 new NettyDecoder(),
                                 new IdleStateHandler(0, 0, nettyClientConfig.getClientChannelMaxIdleTimeSeconds()),
                                 new NettyConnectManageHandler(),
-                                //这里注册了NettyClientHandler，在这个NettyClientHandler中会处理接收到的请求
+                                //这里注册了NettyClientHandler，在这个NettyClientHandler中会处理接收到的请求,
                                 new NettyClientHandler());
                     }
                 });
@@ -260,7 +260,7 @@ public class NettyRemotingClient extends NettyRemotingAbstract implements Remoti
                     this.lockChannelTables.unlock();
                 }
             } else {
-                log.warn("closeChannel: try to lock channel table, but timeout, {}ms", LOCK_TIMEOUT_MILLIS);
+                log.warn("cNettyConnectManagerHandlerloseChannel: try to lock channel table, but timeout, {}ms", LOCK_TIMEOUT_MILLIS);
             }
         } catch (InterruptedException e) {
             log.error("closeChannel exception", e);

@@ -47,6 +47,14 @@
         </dependency>
 
         <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-log4j12</artifactId>
+            <version>1.7.21</version>
+        </dependency>
+
+        <!--原来netty-tcnative这个包也不属于netty项目的一部分(Tomcat Native Fork for Netty)，而是作为一个独立项目发布的，
+        我猜测应该是作者在开发环境中为了做跨平台的时候加的东西吧，因为里面有jni，但是正式发布的时候是没有后面那些东西的。-->
+        <dependency>
             <groupId>io.netty</groupId>
             <artifactId>netty-tcnative</artifactId>
             <version>1.1.33.Fork22</version>
@@ -57,6 +65,9 @@
     <build>
         <extensions>
             <extension>
+                <!--os-maven-plugin 是设置各种有用属性（从 OS 中检测的 ${os.name} 和 ${os.arch} 属性）的 Maven 插件
+                比如上面的这个${os.detected.classifier} 这个属性就是通过下面的这个插件配置进去的
+                ：-->
                 <groupId>kr.motd.maven</groupId>
                 <artifactId>os-maven-plugin</artifactId>
                 <version>1.4.0.Final</version>

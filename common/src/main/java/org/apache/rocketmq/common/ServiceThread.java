@@ -103,6 +103,19 @@ public abstract class ServiceThread implements Runnable {
         }
     }
 
+    /**
+     * 为什么会有这个方法呢？比如在RocketMQ中使用一个单一的线程PullMessageService来负责消息的拉取。
+     * 这个PullMessageService就是ServiceThread的子类。
+     * PullMessageService 拉取消息的原理就是while循环 取队列中的拉取任务。
+     * 有一个场景就是 其他线程让PullMessageService暂停拉取任务，此时就可以调用waitForRunning方法，
+     * 在这个内部 因为我们要挂起当前线程，然后等待其他线程唤醒，因此先设置标记 hasNotified为false
+     *
+     * 然后调用CountDownLatch2的await方法阻塞当前线程.
+     * 也就是说在A线程中 使用ServiceThread对象，调用了ServiceThread对象的waitForRunning方法，导致A线程被阻塞。
+     * 需要注意的是当调用ServiceThread的shutDown方法的时候 需要 执行waitPoint的countDown方法来唤醒A线程
+     *
+     * @param interval
+     */
     protected void waitForRunning(long interval) {
         if (hasNotified.compareAndSet(true, false)) {
             this.onWaitEnd();

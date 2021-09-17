@@ -40,6 +40,7 @@ public class RemotingCommand {
     private static final int RPC_ONEWAY = 1; // 0, RPC
     private static final Map<Class<? extends CommandCustomHeader>, Field[]> CLASS_HASH_MAP =
         new HashMap<Class<? extends CommandCustomHeader>, Field[]>();
+    //canonical——name_cache
     private static final Map<Class, String> CANONICAL_NAME_CACHE = new HashMap<Class, String>();
     // 1, Oneway
     // 1, RESPONSE_COMMAND
@@ -326,7 +327,7 @@ public class RemotingCommand {
     }
 
     public ByteBuffer encode() {
-        // 1> header length size
+        // 1> header length sizeencodeHeader
         int length = 4;
 
         // 2> header data length

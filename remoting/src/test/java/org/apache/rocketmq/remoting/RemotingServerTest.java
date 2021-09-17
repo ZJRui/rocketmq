@@ -18,6 +18,8 @@
 package org.apache.rocketmq.remoting;
 
 import io.netty.channel.ChannelHandlerContext;
+
+import java.io.IOException;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import org.apache.rocketmq.remoting.annotation.CFNullable;
@@ -79,26 +81,28 @@ public class RemotingServerTest {
     @BeforeClass
     public static void setup() throws InterruptedException {
         remotingServer = createRemotingServer();
-        remotingClient = createRemotingClient();
+       // remotingClient = createRemotingClient();
     }
 
     @AfterClass
     public static void destroy() {
-        remotingClient.shutdown();
+       // remotingClient.shutdown();
         remotingServer.shutdown();
     }
 
     @Test
     public void testInvokeSync() throws InterruptedException, RemotingConnectException,
-        RemotingSendRequestException, RemotingTimeoutException {
-        RequestHeader requestHeader = new RequestHeader();
+        RemotingSendRequestException, RemotingTimeoutException, IOException {
+
+        System.in.read();
+/*        RequestHeader requestHeader = new RequestHeader();
         requestHeader.setCount(1);
         requestHeader.setMessageTitle("Welcome");
         RemotingCommand request = RemotingCommand.createRequestCommand(0, requestHeader);
-        RemotingCommand response = remotingClient.invokeSync("localhost:8888", request, 1000 * 3);
+        RemotingCommand response = remotingClient.invokeSync("localhost:8888", request, 100000 * 3);
         assertTrue(response != null);
         assertThat(response.getLanguage()).isEqualTo(LanguageCode.JAVA);
-        assertThat(response.getExtFields()).hasSize(2);
+        assertThat(response.getExtFields()).hasSize(2);*/
 
     }
 
