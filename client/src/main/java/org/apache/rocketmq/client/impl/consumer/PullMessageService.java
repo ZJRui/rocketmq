@@ -30,6 +30,63 @@ import org.apache.rocketmq.common.utils.ThreadUtils;
 public class PullMessageService extends ServiceThread {
     private final InternalLogger log = ClientLogger.getLog();
     /**
+     * PullRequest 是针对Topic 拉取请求 还是针对MessageQueue拉取请求？
+     *
+     *
+     *消费者消息消费的过程
+     *
+     从Broker拉取到的消息如何交给Consumer处理？消费者如何做流量控制，消费者消息堆积的时候就不拉取数据
+
+     一个Topic可以有多个MessageQueue，MessageQueue是Broker端的数据结构，用来存放生产者发送给Broker的消息，可以成为消息队列或者消息消费队列。
+     ProcessQueue是消费端的数据结构，叫做消息处理队列，消费者并不从这个对象取出数据进行消费。
+     每一个MessageQueue都有一个对应的ProcessQueue。
+     ProcessQueue的作用是为了做流量控制。
+
+
+     Consumer创建的时候会创建一个线程池，同时这个线程池指定了使用Consumer对象中的consumeRequestQueue队列。
+     消息消费的过程是，PullMessageService线程执行消息拉取会通过pullMessage方法
+     org.apache.rocketmq.client.impl.consumer.DefaultMQPushConsumerImpl#pullMessage
+     在PullMessage方法中 对拉取到的消息 会放入到ProcessQueue 消息处理队列中。
+     同时会将消息封装一个ConsumeRequest，并将这个ConsumeRequest提交到消费者的消费线程池中处理。因此我们说消息的拉取和消息的处理逻辑是解耦的； 拉取消息之后并不是在同一个线程中对消息进行处理。
+     boolean dispatchToConsume =
+     processQueue.putMessage(pullResult.getMsgFoundList());
+
+     ConsumeRequest consumeRequest =
+     new ConsumeRequest(msgs, processQueue, messageQueue);
+     this.consumeExecutor.submit(consumeRequest);
+
+
+     为什么pull获取到的消息 不直接放入到线程池中，还需要放入到ProcessQueue呢？因为如果直接放入到线程池很难监控，比如如何得知当前消息堆积的数量，如何重复处理某些消息。RocketMQ定义了一个快照类ProcessQueue来解决这个问题，他保存了对应的MessageQueue消息处理快照状态。
+     ProcessQueue对象主要内容是一个TreeMap，TreeMap以MessageQueue的offset作为key，消息内容作为value，保存所有从MessageQueue获取到，但是还未被处理的消息。
+
+
+
+     PullRequest 请求对象是每一个topic一个还是每一个MessageQueue一个？系统内会有多少个拉取线程？ 拉取消息的时候是根据什么寻找消息的，拉取到的是哪些消息（单个topic还是多个topic？）
+
+     PullRequest请求对象中主要有consumerGroup消费者组、messageQueue待拉取消息队列，processQueue 消息处理队列，nextOffset 待拉取MessageQueue的偏移量。因此PullRequest是针对某一个Topic下的某一个MessageQueue进行拉取。
+     如果一个consumer对象处理同一个Topic的两个消息队列MessageQueue 就会有两个PullRequest
+     这一点可以从org.apache.rocketmq.client.impl.consumer.RebalanceImpl#updateProcessQueueTableInRebalance
+     方法中看出来。
+     for (MessageQueue mq : mqSet) {
+     ProcessQueue pq = new ProcessQueue();
+     PullRequest pullRequest = new PullRequest(）
+     pullRequest.setMessageQueue(mq);
+     pullRequest.setProcessQueue(pq);
+     pullRequestList.add(pullRequest);
+     }
+
+     对pullRequestList 中的每一个PullRequest放置到 pullRequestQueue队列中
+     org.apache.rocketmq.client.impl.consumer.PullMessageService#pullRequestQueue
+     for (PullRequest pullRequest : pullRequestList) {
+     this.pullRequestQueue.put(pullRequest);
+     }
+
+
+     *
+     *
+     *
+     *
+     *
      *
      */
     private final LinkedBlockingQueue<PullRequest> pullRequestQueue = new LinkedBlockingQueue<PullRequest>();

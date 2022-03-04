@@ -36,6 +36,7 @@
              *             long offset = 26;
              *
              *             long beginTime = System.currentTimeMillis();
+             *              //主动拉取消息
              *             PullResult pullResult = consumer.pullBlockIfNotFound(mq, null, offset, 32);
              *             System.out.printf("%s%n", System.currentTimeMillis() - beginTime);
              *             System.out.printf("%s%n", pullResult);

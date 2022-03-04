@@ -43,6 +43,18 @@ import org.apache.rocketmq.common.protocol.body.ProcessQueueInfo;
  * PullMessageService然后将消息提交到消费者 消费线程池，消息成功消费后从ProcessQueue中移除。
  *
  *
+ *
+ *
+ * 为什么要设计ProcessQueue 参考《RocketMQ实战与原理解析》 主要是为了做流量控制，； 特别注意的是消费者并不是从这个ProcessQueue对象中获取消息来消费。
+ *
+ *消息消费的过程是，PullMessageService线程执行消息拉取会通过pullMessage方法
+ * org.apache.rocketmq.client.impl.consumer.DefaultMQPushConsumerImpl#pullMessage
+ * 在PullMessage方法中 对拉取到的消息 会放入到ProcessQueue 消息处理队列中。
+ * 同时会将消息封装一个ConsumeRequest，并将这个ConsumeRequest提交到消费者的消费线程池中处理。因此我们说消息的拉取和消息的处理逻辑是解耦的； 拉取消息之后并不是在同一个线程中对消息进行处理。
+ *
+ *
+ *
+ *
  */
 public class ProcessQueue {
     public final static long REBALANCE_LOCK_MAX_LIVE_TIME =
