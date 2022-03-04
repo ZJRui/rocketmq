@@ -408,6 +408,13 @@ public class ConsumeMessageOrderlyService implements ConsumeMessageService {
         }
     }
 
+
+    /**
+     * RocketMQ中有两个ConsumeRequest类
+     * org.apache.rocketmq.client.impl.consumer.ConsumeMessageConcurrentlyService.ConsumeRequest
+     * org.apache.rocketmq.client.impl.consumer.ConsumeMessageOrderlyService.ConsumeRequest
+     *
+     */
     class ConsumeRequest implements Runnable {
         private final ProcessQueue processQueue;
         private final MessageQueue messageQueue;
@@ -425,6 +432,40 @@ public class ConsumeMessageOrderlyService implements ConsumeMessageService {
             return messageQueue;
         }
 
+        /**
+         *
+         * RocketMQ中有两个ConsumeRequest类
+         *      * org.apache.rocketmq.client.impl.consumer.ConsumeMessageConcurrentlyService.ConsumeRequest
+         *      * org.apache.rocketmq.client.impl.consumer.ConsumeMessageOrderlyService.ConsumeRequest
+         *
+         *
+         * 作者：中间件兴趣圈
+         * 链接：https://www.zhihu.com/question/30195969/answer/1698410449
+         * 来源：知乎
+         * 著作权归作者所有。商业转载请联系作者获得授权，非商业转载请注明出处。
+         *
+         * RokcetMQ的完成顺序性主要是由3把琐来实现的。
+         * 下图是RocketMQ顺序消费的工作原理：<img src="https://pic3.zhimg.com/50/v2-e6b3e5fed942e358c3b5df77dddbe565_720w.jpg?source=1940ef5c"
+         * data-caption="" data-size="normal" data-rawwidth="2117" data-rawheight="1190" data-default-watermark-src="https://pic2.zhimg.com/50/v2-4c7b4fd509716757f08aea062c1b6961_720w.jpg?source=1940ef5c"
+         * class="origin_image zh-lightbox-thumb" width="2117" data-original="https://pic3.zhimg.com/v2-e6b3e5fed942e358c3b5df77dddbe565_r.jpg?source=1940ef5c"/>
+         * 1、消费端在启动时首先会进行队列负载机制，遵循一个消费者可以分配多个队列，但一个队列只会被一个消费者消费的原则。
+         * 2、消费者根据分配的队列，向 Broker 申请琐，如果申请到琐，则拉取消息，否则放弃消息拉取，等到下一个队列负载周期(20s)再试。
+         * 3、拉取到消息后会在消费端的线程池中进行消费，但消费的时候，会对消费队列MessageQueue进行加锁，即同一个消费队列中的多条消息会串行执行。
+         * 4、在消费的过程中，会对处理队列(ProccessQueue)进行加锁，保证处理中的消息消费完成，发生队列负载后，其他消费者才能继续消费。
+         *
+         * 前面2把琐比较好理解，最后一把琐有什么用呢？例如队列 q3 目前是分配给消费者C2进行消费，已将拉取了32条消息在线程池中处理，
+         * 然后对消费者进行了扩容，分配给C2的q3队列，被分配给C3了，由于C2已将处理了一部分，位点信息还没有提交，如果C3立马去消费q3队列中的消息，
+         * 那存在一部分数据会被重复消费，故在C2消费者在消费q3队列的时候，消息没有消费完成，那负载队列就不能丢弃该队列，就不会在broker端释放琐，
+         * 其他消费者就无法从该队列消费，尽最大可能保证了消息的重复消费，保证顺序性语义。
+         *
+         *
+         *
+         * 要保证部分消息有序，需要发送端和消费端配合处理。 在发送端，要做到
+         * 把同一业务 ID 的消息发送到同一个 Message Queue ；在消费过程中，要做到从
+         * 同一个 Message Queue 读取的消息不被并发处理，这样才能达到部分有序 。《Rokcetmq实战与原理解析
+         *
+         *
+         */
         @Override
         public void run() {
             if (this.processQueue.isDropped()) {
@@ -432,8 +473,15 @@ public class ConsumeMessageOrderlyService implements ConsumeMessageService {
                 return;
             }
 
+            /**
+             * 获取MessageQueue的锁
+             */
             final Object objLock = messageQueueLock.fetchLockObject(this.messageQueue);
             synchronized (objLock) {
+                /**
+                 * 如果是广播模式，所有的consumer都需要消费该消息
+                 *
+                 */
                 if (MessageModel.BROADCASTING.equals(ConsumeMessageOrderlyService.this.defaultMQPushConsumerImpl.messageModel())
                     || (this.processQueue.isLocked() && !this.processQueue.isLockExpired())) {
                     final long beginTime = System.currentTimeMillis();
@@ -491,6 +539,16 @@ public class ConsumeMessageOrderlyService implements ConsumeMessageService {
                             ConsumeReturnType returnType = ConsumeReturnType.SUCCESS;
                             boolean hasException = false;
                             try {
+                                /**
+                                 * 对ProcessQueue进行锁定
+                                 * 在消费的过程中，会对处理队列(ProccessQueue)进行加锁，保证处理中的消息消费完成，发生队列负载后，其他消费者才能继续消费。前面2把琐比较好理解，最后一把琐有什么用呢？例如队列 q3 目前是分配给消费者C2进行消费，已将拉取了32条消息在线程池中处理，然后对消费者进行了扩容，分配给C2的q3队列，被分配给C3了，由于C2已将处理了一部分，位点信息还没有提交，如果C3立马去消费q3队列中的消息，那存在一部分数据会被重复消费，故在C2消费者在消费q3队列的时候，消息没有消费完成，那负载队列就不能丢弃该队列，就不会在broker端释放琐，其他消费者就无法从该队列消费，尽最大可能保证了消息的重复消费，保证顺序性语义。
+                                 *
+                                 * 作者：中间件兴趣圈
+                                 * 链接：https://www.zhihu.com/question/30195969/answer/1698410449
+                                 * 来源：知乎
+                                 * 著作权归作者所有。商业转载请联系作者获得授权，非商业转载请注明出处。
+                                 *
+                                 */
                                 this.processQueue.getLockConsume().lock();
                                 if (this.processQueue.isDropped()) {
                                     log.warn("consumeMessage, the message queue not be able to consume, because it's dropped. {}",

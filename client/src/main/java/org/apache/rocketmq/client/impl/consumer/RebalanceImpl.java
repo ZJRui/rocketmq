@@ -541,6 +541,13 @@ public abstract class RebalanceImpl {
             if (!this.processQueueTable.containsKey(mq)) {
                 /**
                  *
+                 * 如果没有锁定就不处理。
+                 * 会不会出现当消息队列重新负载时，原先由自己处理 的消息队列被分配给另外一个消费者，此时如果还未来得及将ProcessQueue解除锁定，
+                 * 就被另外一个消费者添加进去，此时会存在多个消息消费者消费一个消息队列吗？ 答案是不会的，
+                 * 因为当一个新的消费队列分配各消费者时，在添加其拉取任务之前必须先向Broker发送对该消息队列的加锁请求，
+                 * 只有加锁成功后才能继续拉取消息，否则等到下一次负载后，只有消费队列被原先占有的消费者释放后，才能开始新的拉取任务。
+                 *
+                 *
                  */
                 if (isOrder && !this.lock(mq)) {
                     log.warn("doRebalance, {}, add a new mq failed, {}, because lock failed", consumerGroup, mq);

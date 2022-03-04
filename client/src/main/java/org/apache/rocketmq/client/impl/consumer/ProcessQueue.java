@@ -75,6 +75,10 @@ public class ProcessQueue {
      */
     private final AtomicLong msgCount = new AtomicLong();
     private final AtomicLong msgSize = new AtomicLong();
+
+    /**
+     *
+     */
     private final Lock lockConsume = new ReentrantLock();
     /**
      * A subset of msgTreeMap, will only be used when orderly consume
@@ -102,6 +106,11 @@ public class ProcessQueue {
      * 上一次消费时间戳
      */
     private volatile long lastConsumeTimestamp = System.currentTimeMillis();
+
+    /**
+     *
+     *
+     */
     private volatile boolean locked = false;
     private volatile long lastLockTimestamp = System.currentTimeMillis();
     private volatile boolean consuming = false;
