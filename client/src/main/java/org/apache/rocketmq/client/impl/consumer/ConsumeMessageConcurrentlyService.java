@@ -386,6 +386,14 @@ public class ConsumeMessageConcurrentlyService implements ConsumeMessageService 
         }
     }
 
+    /***
+     * org.apache.rocketmq.client.impl.consumer.
+     * ConsumeMessageConcurrentlyService#processConsumeResult(org.apache.rocketmq.client.consumer.listener.ConsumeConcurrentlyStatus, org.apache.rocketmq.client.consumer.listener.ConsumeConcurrentlyContext, org.apache.rocketmq.client.impl.consumer.ConsumeMessageConcurrentlyService.ConsumeRequest)
+     *
+     * @param status
+     * @param context
+     * @param consumeRequest
+     */
     public void processConsumeResult(
         final ConsumeConcurrentlyStatus status,
         final ConsumeConcurrentlyContext context,
@@ -435,6 +443,15 @@ public class ConsumeMessageConcurrentlyService implements ConsumeMessageService 
          *                  * 集群模式：同一个消费组内的所有消息消费者共享消息主题下的所有消息， 同 一条消
          *                  * 息（同一个消息消费队列）在同一时间只会被消费组内的一个消费者消费，并且随着消费队
          *                  * 列的动态变化重新负载，所以消费进度需要保存在一个每个消费者都能访问到的地方。
+         *
+         *
+         *                  ==========================
+         * RocketMQ消息重试
+         * 我们需要明确，只有当消费模式为 MessageModel.CLUSTERING(集群模式) 时，Broker 才会自动进行重试，对于广播消息是不会重试的。
+         * 为什么广播消息不会消息重试
+         * 注意：消费端的消息重试机制一定要在集群消费模式下才有效，广播消费模式下，RMQ是不会进行重试机制的，广播模式下，消息只消费一次，不管你有没有成功！！！
+         *
+         *
          */
         switch (this.defaultMQPushConsumer.getMessageModel()) {
             case BROADCASTING:
