@@ -976,10 +976,15 @@ public class DefaultMQProducerImpl implements MQProducerInner {
             this.topicPublishInfoTable.putIfAbsent(topic, new TopicPublishInfo());
 
             /**
-             * 从nameServer中查询topic，.
+             * 从nameServer中查询topic，. 查询的结果会更新到本地的路由表中。但是如果查询的结果是nameServer中也没有路由信息。 则在下面
+             * 会判断if (topicPublishInfo.isHaveTopicRouterInfo() || topicPublishInfo.ok())  如果这个条件不满足则意味着nameServer也没有路由信息
+             * 然后就会执行  this.mQClientFactory.updateTopicRouteInfoFromNameServer(topic, true, this.defaultMQProducer); 注意传递的第二个和第三个参数
+             * 在updateTopicRouteInfoFromNameServer方法内部会使用 auto_create_topic 主题的路由信息中选择一个消息队列所在Broker 将本次发送的消息发送到这个broker上。
+             *
              * 第一次发送消息时，本地没有缓存 topic 的路由信息，查询 NameServer 尝试获取，如果路由信息未找到，再次尝试用默认主题 DefaultMQProducerlmpl#createTopicKey 去查询，
              * 如果 BrokerConfig#autoCreateTopicEnable 为 true 时， NameServer 将返回路由信息，如果
              * autoCreateTopicEnab l e 为 false 将抛出无法找到 topic 路由异常。
+             *
              *
              */
             this.mQClientFactory.updateTopicRouteInfoFromNameServer(topic);
@@ -1119,6 +1124,9 @@ public class DefaultMQProducerImpl implements MQProducerInner {
 
                 SendMessageRequestHeader requestHeader = new SendMessageRequestHeader();
                 requestHeader.setProducerGroup(this.defaultMQProducer.getProducerGroup());
+                /**
+                 * 注意下面设置了消息的topic和 defaultTopic
+                 */
                 requestHeader.setTopic(msg.getTopic());
                 requestHeader.setDefaultTopic(this.defaultMQProducer.getCreateTopicKey());
                 /**

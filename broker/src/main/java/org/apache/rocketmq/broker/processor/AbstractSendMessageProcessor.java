@@ -204,6 +204,44 @@ public abstract class AbstractSendMessageProcessor extends AsyncNettyRequestProc
                 }
             }
 
+            /**
+             *  关于 topic自动创建的问题
+             *  DefaultMQProducer.send 消息的时候 会在DefaultMQProducerImpl的sendDefaultImpl方法中 使用
+             *   TopicPublishInfo topicPublishInfo = this.tryToFindTopicPublishInfo(msg.getTopic()); 获取topic的信息
+             *
+             *   获取topic信息是从本地客户端的路由表topicPublishInfoTable中获取topic，如果本地topicPublishInfoTable 没有路由信息则
+             *   则在  tryToFindTopicPublishInfo方法中 执行 ： 注意第二和第三个参数
+             *     this.mQClientFactory.updateTopicRouteInfoFromNameServer(topic, true, this.defaultMQProducer)，在这个方法中会获取 AUTO_CREATE_TOPIC_KEY_TOPIC的路由信息
+             *
+             *    也就是说在发送消息的时候如果发现 topic不存在 则会 获取 AUTO_CREATE_TOPIC_KEY_TOPIC 这个主题的路由信息，然后随机
+             *    在这个auto_CreateTopic 主题的路由中选择一个消息队列，将消息发送到该消息队列所属的broker上。但是这个发出的消息的topic 仍然是业务topic。
+             *    只是说在发送消息的选择消息队列的时候使用了 AUTO_CREATE_TOPIC_KEY_TOPIC 这个topic的消息队列所在的broker.
+             *
+             *    Broker在收到这个消息的时候 处理过程在AbstractSendMessageProcessor#msgCheck，broker会从自身的TopicMananger中检查这个消息的topic是否存在，如果
+             *    不存在则会执行this.brokerController.getTopicConfigManager().createTopicInSendMessageMethod（）创建topic
+             *    在Broker端，首先会使用TopicConfigManager根据topic查询路由信息，如果Broker端不存在该主题的路由配置(路由信息),
+             *  此时如果Broker中存在默认主题的路由配置信息，则根据消息发送请求中的队列数量，在Broker创建新Topic的路由信息。这样Broker服务端就会存在主题的路由信息。
+             * 在Broker端的topic配置管理器中存在的路由信息，一会向Nameserver发送心跳包，汇报到Nameserver，另一方面会有一个定时任务，
+             * 定时存储在broker端，具体路径为${ROCKET_HOME}/store/config/topics.json中，这样在Broker关闭后再重启，并不会丢失路由信息。
+             *
+             * 问题： 由此可见 当topic不存在的时候 生产者会选择一个Broker，将消息发送到该Broker，然后这个时候 这个topic只会有一个Borker。然后
+             * 经过一段事件Broker将topic同步给nameServer，其他broker再从nameServer同步过来topic的路由信息，最终这个topic在所有的borker上都有消息队列。
+             *
+             *
+             * 问题：为什么生产者会有 autoCreateTopic主题的路由信息呢？ 因为在Broker启动流程中，会构建TopicConfigManager对象，
+             * 其构造方法中首先会判断是否开启了允许自动创建主题，如果启用了自动创建主题，则向topicConfigTable中添加默认主题的路由信息。NameServer
+             * 会定期收集Broker的路由信息汇总，然后生产者再从nameServer同步路由信息
+             *
+             *
+             * 问题：Broker创建topic的前提是 通过TopicConfigManager 找不到TopicConfig。 那么会不会存在这种情况： 最开始Topic不存在，
+             * 生产者将消息发送给了BrokerA,然后BorkerA创建了topic，但是尚未同步给nameServer。这个时候生产者存在另外一个线程并行发送消息，
+             * 然后第二次将消息发送给了BrokerB，BrokerB没有感知到BrokerA上已经有了topic，然后就自己创建了Topic。 这会不会有问题？
+             * 应该不会有问题，因为BrokerA 创建的topic的路由信息中只会包含BorkerA节点， BorkerB创建的topic路由信息中只会包含BrokerB节点。
+             * 最终broker会跟NameServer同步，然后最终这个topic的路由会包含BrokerA和borkerB。
+             *
+             *
+             *
+             */
             log.warn("the topic {} not exist, producer: {}", requestHeader.getTopic(), ctx.channel().remoteAddress());
             topicConfig = this.brokerController.getTopicConfigManager().createTopicInSendMessageMethod(
                 requestHeader.getTopic(),

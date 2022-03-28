@@ -838,8 +838,44 @@ public class MQClientInstance {
         }
     }
 
+    /**
+     *
+     * @param topic
+     * @param isDefault
+     * @param defaultMQProducer
+     * @return
+     */
     public boolean updateTopicRouteInfoFromNameServer(final String topic, boolean isDefault,
         DefaultMQProducer defaultMQProducer) {
+        /**
+         *
+         * 这个更新路由信息的方法 是 客户端 所有的方法。 这个方法可以大体上分为 两个地方使用到
+         * 1，MQClientInstance的start 方法内会启动一个 定时任务，这个定时任务会 执行 updateTopicRouteInfoFromNameServer，
+         * 在这个 update方法中 调用到了 当前的方法 传递的参数是： 注点第二个和第三个参数
+         * updateTopicRouteInfoFromNameServer(topic, false, null);
+         *
+         * 2，DefaultMQProducer.send 消息的时候 会在DefaultMQProducerImpl的sendDefaultImpl方法中 使用
+         *   TopicPublishInfo topicPublishInfo = this.tryToFindTopicPublishInfo(msg.getTopic()); 获取topic的信息
+         *
+         *   获取topic信息是从本地客户端的路由表topicPublishInfoTable中获取topic，如果本地topicPublishInfoTable 没有路由信息则
+         *   则在  tryToFindTopicPublishInfo方法中 执行 ： 注意第二和第三个参数
+         *     this.mQClientFactory.updateTopicRouteInfoFromNameServer(topic, true, this.defaultMQProducer);
+         *    也就是说在发送消息的时候如果发现 topic不存在 则会 获取 AUTO_CREATE_TOPIC_KEY_TOPIC 这个主题的路由信息，然后随机
+         *    在这个auto_CreateTopic 主题的路由中选择一个消息队列，将消息发送到该消息队列所属的broker上。但是这个发出的消息的topic 仍然是业务topic。
+         *    只是说在发送消息的选择消息队列的时候使用了 AUTO_CREATE_TOPIC_KEY_TOPIC 这个topic的消息队列所在的broker.
+         *
+         *    Broker在收到这个消息的时候 处理过程在AbstractSendMessageProcessor#msgCheck，broker会从自身的TopicMananger中检查这个消息的topic是否存在，如果
+         *    不存在则会执行this.brokerController.getTopicConfigManager().createTopicInSendMessageMethod（）创建topic。
+         *    而且值得注意的是 ：生产者 从NameServer中获取auto_create_topic的路由信息，将这个路由信息 作为 当前业务Topic的路由信息，也就是说在生产者尚未主动从nameServer
+         *    同步BorkerA创建的业务Topic的路由信息之前，生产者将会一直使用 auto_create_topic的路由信息。
+         *
+         *
+         * 问题：为什么生产者会有 autoCreateTopic主题的路由信息呢？ 因为在Broker启动流程中，会构建TopicConfigManager对象，
+         * 其构造方法中首先会判断是否开启了允许自动创建主题，如果启用了自动创建主题，则向topicConfigTable中添加默认主题的路由信息。NameServer
+         * 会定期收集Broker的路由信息汇总，然后生产者再从nameServer同步路由信息
+         *
+         *
+         */
         try {
             if (this.lockNamesrv.tryLock(LOCK_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)) {
                 try {
@@ -865,6 +901,11 @@ public class MQClientInstance {
                          *   第一次发送消息时，本地没有缓存 topic 的路由信息，查询 NameServer 尝试获取，如果路由信息未找到，再次尝试用默认主题 DefaultMQProducerlmpl#createTopicKey 去查询，
                          *              * 如果 BrokerConfig#autoCreateTopicEnable 为 true 时， NameServer 将返回路由信息，如果
                          *              * autoCreateTopicEnab l e 为 false 将抛出无法找到 topic 路由异常。
+                         *
+                         *
+                         *
+                         * 问题： 这里为什么 要主动发送请求 询问NameServer 关于Auto_Create_topic的路由信息呢？ 不是生产者会主动从NameServer中同步路由信息吗，这样的话
+                         * 生产者应该先从本地查找Auto_create_topic的路由信息，如果找不到然后才会发送消息给NameServer。 而下面的方法中却直接发送消息
                          *
                          */
                         topicRouteData = this.mQClientAPIImpl.getDefaultTopicRouteInfoFromNameServer(defaultMQProducer.getCreateTopicKey(),

@@ -23,8 +23,6 @@ import java.util.concurrent.atomic.AtomicInteger;
  * 测试广播消息是否能够进行重试
  *
  *
- * 我们需要明确，只有当消费模式为 MessageModel.CLUSTERING(集群模式) 时，Broker 才会自动进行重试，对于广播消息是不会重试的。
- * 为什么广播消息不会消息重试
  *
  **/
 public class TestBrocadMessageRetry {
