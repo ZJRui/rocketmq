@@ -173,6 +173,9 @@ public abstract class RebalanceImpl {
             requestBody.getMqSet().add(mq);
 
             try {
+                /**
+                 * 这里发送消息 lock Broker上的messageQueue
+                 */
                 Set<MessageQueue> lockedMq =
                     this.mQClientFactory.getMQClientAPIImpl().lockBatchMQ(findBrokerResult.getBrokerAddr(), requestBody, 1000);
                 for (MessageQueue mmqq : lockedMq) {
@@ -260,7 +263,15 @@ public abstract class RebalanceImpl {
                 final String topic = entry.getKey();
                 try {
                     /**
-                     * RocketMQ 是如何针对单个主题进行消息 队列重新负 载
+                     * RocketMQ 是如何针对单个主题进行消息 队列重新负 载。
+                     *
+                     * 在RebalanceService线程的run方法中  会遍历所有的Consumer，然后针对每一个Consumer调用其doReplace方法做重平衡。
+                     * Consumer的rebalance 依赖于RebalanceImpl对象，consumer 对象会调用RebalanceImpl对象的doRebalance对方法，同时将consumer
+                     * 接收到MessageListener是否是order传递给RebalanceImpl对象。从下面的两个方法中可以看到
+                     *
+                     * org.apache.rocketmq.client.impl.factory.MQClientInstance#doRebalance()
+                     * org.apache.rocketmq.client.impl.consumer.DefaultMQPushConsumerImpl#doRebalance()
+                     *
                      */
                     this.rebalanceByTopic(topic, isOrder);
                 } catch (Throwable e) {
@@ -369,7 +380,10 @@ public abstract class RebalanceImpl {
                     }
 
                     /**
-                     * 对比消息队列是否发生变化，
+                     * 对比消息队列是否发生变化。
+                     * 注意第二个参数 allocateResult， 这个参数是 当前Consumer根据 消息队列分配算法 计算得到的应该分配到的MessageQueue。
+                     *
+                     * 对于广播模式，每一个Consumer消费Topic的所有消息，因此广播模式下 每个Consumer 负载 Topic的所有messageQueue,因此在上面的方法中我们看到传递的是mqSet
                      */
                     boolean changed = this.updateProcessQueueTableInRebalance(topic, allocateResultSet, isOrder);
                     if (changed) {
@@ -546,6 +560,9 @@ public abstract class RebalanceImpl {
                  * 就被另外一个消费者添加进去，此时会存在多个消息消费者消费一个消息队列吗？ 答案是不会的，
                  * 因为当一个新的消费队列分配各消费者时，在添加其拉取任务之前必须先向Broker发送对该消息队列的加锁请求，
                  * 只有加锁成功后才能继续拉取消息，否则等到下一次负载后，只有消费队列被原先占有的消费者释放后，才能开始新的拉取任务。
+                 *
+                 * ==============
+                 * 顺序消息消费和并发消息消费的第一个关键区别： 顺序消息在创建消息队列拉取任务时 需要在Broker服务器锁定该消息队列MessageQueue 也就是下面的 this.lock
                  *
                  *
                  */

@@ -77,7 +77,7 @@ public class ProcessQueue {
     private final AtomicLong msgSize = new AtomicLong();
 
     /**
-     *
+     * 注意这个锁是非公平锁
      */
     private final Lock lockConsume = new ReentrantLock();
     /**
@@ -108,7 +108,17 @@ public class ProcessQueue {
     private volatile long lastConsumeTimestamp = System.currentTimeMillis();
 
     /**
-     *
+     *ProcessQueue有两个Lock属性
+     * （1）private final Lock lockConsume = new ReentrantLock();
+     * （2）private volatile boolean locked = false;
+     * 对于第二个属性 是在RebalanceImpl的rebalanceByTopic方法中，如果是Consume是顺序消费，
+     * 在重新计算当前consume得到的MessageQueue之后 会向Broker发送请求锁定该MessageQueue，
+     * 如果请求锁定成功，那么在Consume的本地会将这个messageQueue对应的ProcessQueue设置为锁定状态。
+     * 因为MessageQueue对象中没有 boolean locked属性状态，MessageQueue是否被锁定是通过ProcessQueue的locked属性体现的。
+     * 对于第一个属性，是在ConsumeMessageOrderlyService的ConsumeRequest的run方法中 开始消费消息前
+     * 执行processQueue.getLockConsume().lock();他主要是用来表示当前正在有消息被消费这个状态。
+     * 避免当前线程消费消息的时候  周期MessageQueue重分配线程释放当前的MessageQueue的锁，
+     * 导致其他进程的consume获取到这个MessageQueue，进而导致其他进程Consumer消费这个MessageQueue造成重复消费的问题。 具体可以参考后文。
      *
      */
     private volatile boolean locked = false;

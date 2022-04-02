@@ -344,7 +344,7 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
             return;
         }
 
-        if (!this.consumeOrderly) {
+        if (!this.consumeOrderly) {//非顺序消费
             /**
              * ProcessQueue 中队列最大偏移量和最小偏移量的间距，不能超过consumeConcurrentlyMaxSpan，否则触发流控，每触发1000次输出提示语。
              * 这里主要考虑是担心一条消息阻塞，消息进度无法向前推进，可能造成大量消息重复消费。
@@ -359,7 +359,7 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
                 }
                 return;
             }
-        } else {
+        } else {//顺序消费
             /**
              * 为什么要判断 isLocked？
              * 会不会出现当消息队列重新负载时，原先由自己处理的消息队列被分配给另外一个消费者，此时如果还未来得及将ProcessQueue解除锁定，就会被另外一个消费者添加进去，

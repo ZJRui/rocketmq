@@ -409,8 +409,10 @@ public class DefaultMQPullConsumerImpl implements MQConsumerInner {
             /**
              * pullConsumer为什么 isOrder为false
              *
-             * PushConsumer中存在一个consumeOrderly属性， 该属性的取值是在consumer的start的方法中判断MessageListener的类型 如果是MessageListenerOrderly则为顺序消费，否则为并发消费
+             * PushConsumer中存在一个consumeOrderly属性， 该属性的取值是在consumer的start的方法中判断MessageListener的类型
+             * 如果是MessageListenerOrderly则为顺序消费，否则为并发消费
              * 但是PullConsumer没有 consumerOrderly属性，因此PullConsumer全为false
+             *
              */
             this.rebalanceImpl.doRebalance(false);
         }

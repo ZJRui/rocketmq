@@ -229,8 +229,31 @@ public class ConsumeMessageOrderlyService implements ConsumeMessageService {
         this.scheduledExecutorService.schedule(new Runnable() {
             @Override
             public void run() {
+                /**
+                 *
+                 * 因此为了保证同一个消息队列MessageQueue中的消息被顺序消费，考虑 一个MessageQueue中的两个消息A,B先后被提交到消费者线程池中，
+                 * 但是如果消费者线程池中有两个线程，则消息A先被线程1消费，消息B被线程2消费， 可能消息B已经执行完了 线程1 还没有消费完消息A，
+                 * 也就说多线程下 我们可以保证 消息被顺序提交到消费者线程池中，但是因为 每个消息消费的时间不确定，因此无法保证消息消费完成的顺序。
+                 * 从而要求线程池中只有一个线程才能保证顺序消费。
+                 * 除了线程数设置为1这种方法 外 还可以 通过 对MessageQueue加锁的方式 来限制同时多个线程 消费你MessageQueue的消息。 R
+                 * ocketMQ中 顺序消息的实现原理就是 通过对MessageQueue加锁。
+                 *
+                 * 在ConsumeRequest对象的run方法中需要禁止多个线程同时处理同一个MessageQueue中的消息,从而保证同一个MessageQueue中的消息被顺序消费
+                 *
+                 *
+                 * 那顺序消费（重新分配队列，拉取消息，消费消息）时为什么要全局加锁呢？
+                 *
+                 * 新的consumer上线触发了rebalance（每隔30s重新负载均衡），在不加锁的情况下queue有可能被直接分配给别的consumer了，
+                 * 而原来的老的consumer可能还没有触发rebalance，导致在某一时刻某个队列同时存在两个consumer。如果不加锁，在这一段时间内存在并发，可
+                 * 能会出现重复消费，如消费者2消费到了第10条消息（当然已经消费了第6条消息），而消费者1才消费到第6条消息，形成可能的的乱序。
+                 *
+                 */
                 boolean lockOK = ConsumeMessageOrderlyService.this.lockOneMQ(mq);
                 if (lockOK) {
+                    /**
+                     *
+                     *
+                     */
                     ConsumeMessageOrderlyService.this.submitConsumeRequestLater(processQueue, mq, 10);
                 } else {
                     ConsumeMessageOrderlyService.this.submitConsumeRequestLater(processQueue, mq, 3000);
@@ -480,11 +503,35 @@ public class ConsumeMessageOrderlyService implements ConsumeMessageService {
 
             /**
              * 获取MessageQueue的锁
+             *
+             * 因此为了保证同一个消息队列MessageQueue中的消息被顺序消费，考虑 一个MessageQueue中的两个消息A,B先后被提交到消费者线程池中，
+             * 但是如果消费者线程池中有两个线程，则消息A先被线程1消费，消息B被线程2消费， 可能消息B已经执行完了 线程1 还没有消费完消息A，
+             * 也就说多线程下 我们可以保证 消息被顺序提交到消费者线程池中，但是因为 每个消息消费的时间不确定，因此无法保证消息消费完成的顺序。
+             * 从而要求线程池中只有一个线程才能保证顺序消费。
+             * 除了线程数设置为1这种方法 外 还可以 通过 对MessageQueue加锁的方式 来限制同时多个线程 消费你MessageQueue的消息。 R
+             * ocketMQ中 顺序消息的实现原理就是 通过对MessageQueue加锁。
+             *
+             * 之所以使用加锁的方式而不是限制消费者线程数量来实现 同一个消息队列中的消息顺序执行 是因为 不同的MessageQueue
+             * 之间可以并发执行，因此线程池中可以有多个线程并发执行不同的的MessageQueue中的消息。
+             *
+             * 在ConsumeRequest对象的run方法中需要禁止多个线程同时处理同一个MessageQueue中的消息,从而保证同一个MessageQueue中的消息被顺序消费。
+             *
+             * 这个地方有个问题： 比如我现在的messageQueue 中有三个消息MsgA msgB ，MsgC，正确的消费顺序是a->b->c。  这三个消息被顺序提交到 消费者线程池的消费队列中。
+             * 假设线程1 首先从队列中获取消息A，然后对MessageQueue加锁处理消息， 这个时候线程2 和线程3 先后从队列中获取消息B和消息C，但是因为他们都无法
+             * 对MessageQueue加锁 从而导致 线程阻塞，显然这会影响消息的并发消费。其次 线程2 和线程3 都会被阻塞，那么当线程1 消费完释放messageQueue的锁之后 如何保证
+             * 线程2 会比线程3 优先获取到MessageQueue的锁呢？  显然公平锁是比较好的选择，但是从下面的这个代码中我们看到却是使用了synchronized，
+             * synchronized是非公平锁，那么 这到底是怎么回事？
+             *
+             *
+             *
              */
             final Object objLock = messageQueueLock.fetchLockObject(this.messageQueue);
             synchronized (objLock) {
                 /**
-                 * 如果是广播模式，所有的consumer都需要消费该消息
+                 * 如果是广播模式，所有的consumer都需要消费该消息.
+                 *
+                 *
+                 *
                  *
                  */
                 if (MessageModel.BROADCASTING.equals(ConsumeMessageOrderlyService.this.defaultMQPushConsumerImpl.messageModel())
@@ -511,6 +558,9 @@ public class ConsumeMessageOrderlyService implements ConsumeMessageService {
                         }
 
                         long interval = System.currentTimeMillis() - beginTime;
+                        /**
+                         * 消费任务一次运行的最大时间。
+                         */
                         if (interval > MAX_TIME_CONSUME_CONTINUOUSLY) {
                             ConsumeMessageOrderlyService.this.submitConsumeRequestLater(processQueue, messageQueue, 10);
                             break;
@@ -546,12 +596,42 @@ public class ConsumeMessageOrderlyService implements ConsumeMessageService {
                             try {
                                 /**
                                  * 对ProcessQueue进行锁定
-                                 * 在消费的过程中，会对处理队列(ProccessQueue)进行加锁，保证处理中的消息消费完成，发生队列负载后，其他消费者才能继续消费。前面2把琐比较好理解，最后一把琐有什么用呢？例如队列 q3 目前是分配给消费者C2进行消费，已将拉取了32条消息在线程池中处理，然后对消费者进行了扩容，分配给C2的q3队列，被分配给C3了，由于C2已将处理了一部分，位点信息还没有提交，如果C3立马去消费q3队列中的消息，那存在一部分数据会被重复消费，故在C2消费者在消费q3队列的时候，消息没有消费完成，那负载队列就不能丢弃该队列，就不会在broker端释放琐，其他消费者就无法从该队列消费，尽最大可能保证了消息的重复消费，保证顺序性语义。
+                                 * 在消费的过程中，会对处理队列(ProccessQueue)进行加锁，保证处理中的消息消费完成，发生队列负载后，其他消费者才能继续消费。前面2把琐比较好理解，
+                                 * 最后一把琐有什么用呢？例如队列 q3 目前是分配给消费者C2进行消费，已将拉取了32条消息在线程池中处理，然后对消费者进行了扩容，分配给C2的q3队列，
+                                 * 被分配给C3了，由于C2已将处理了一部分，位点信息还没有提交，如果C3立马去消费q3队列中的消息，那存在一部分数据会被重复消费，
+                                 * 故在C2消费者在消费q3队列的时候，消息没有消费完成，那负载队列就不能丢弃该队列，就不会在broker端释放琐，其他消费者就无法从该队列消费，尽最大可能保证了消息的重复消费，保证顺序性语义。
                                  *
                                  * 作者：中间件兴趣圈
                                  * 链接：https://www.zhihu.com/question/30195969/answer/1698410449
                                  * 来源：知乎
                                  * 著作权归作者所有。商业转载请联系作者获得授权，非商业转载请注明出处。
+                                 *
+                                 * 上面这段话是如何体现的呢？  就是说 因为RebalanceImpl重分配的过程中 会判断当前consumer是否是顺序消费，
+                                 * 如果是顺序消费，那么必须 对consumer重分配后的每一个MessageQueue 发送请求给这个MessageQueue的broker锁定该MessageQueue。
+                                 * 再次重分配后若当前Consumer 在重分配后丢失了某一个MessageQueue，那么当前Consumer需要发送请求给Broker解除对该MessageQueue的锁定。 但是这个
+                                 * MessageQueue的ProcessQueue可能还尚未处理完消息，这里尚未处理完消息是指有些消息正在被处理中，ProcessQueue 中的消息会有两种状态（1）尚未被处理（2）正在被处理
+                                 * 但是尚未处理完。 这里主要考虑是第二种情况。  如果马上解除对MessageQueue的锁定，那么可能会导致 其他Consumer 重新获取到了ProcessQueue中的消息。 对于当前Consumer进程
+                                 * 的ProcessQueue中那些尚未开始处理的消息而言 还好，但是对于那些正在被处理的消息 就可能 被新的Consumer重新消费。 为了解决这个问题，要求顺序消息在消费时（ConsumeMessageOrderlyService
+                                 * 的ConsumeRequest的run） 首先  对ProcessQueue进行加锁，表示当前有消息正在处理中。 然后当前Consumer在  向Broker发起 解除 MessageQueue的锁请求的之前
+                                 * 会先通过MessageQueue的ProcessQueue尝试获取锁， 如果获取锁成功，则意味着ProcessQueue中的消息当前没有被处理中，可以向Broker发送解除messagequeue的请求。
+                                 *如果发现ProcessQueue已经被锁定，则意味着ProcessQueue中有消息正在被处理。 因此不能向Broker发送请求解除对messageQueue的锁。
+                                 * 具体在 org.apache.rocketmq.client.impl.consumer.RebalancePushImpl#removeUnnecessaryMessageQueue()
+                                 *
+                                 *  从上面的分析我们看到 对ProcessQueue加锁 主要是 表示ProcessQueue中当前有消息正在被处理，如果不加锁直接 向Broker发送请求解除MessageQueue，那么新的Consumer就有可能
+                                 *  重新拉取到这个当前正在被处理的消息从而造成重复消费。 从理论上分析， 消息处理前对ProcessQueue进行加锁， 那么应该在消息处理后 且 完成提交位移 之后在释放ProcessQueue的锁。
+                                 *  这样能保证新的consumer不会重复消费这个消息。 但是在源码中 如下 我们看到 ProcessQueue的释放锁 是在 listener消费完成之后 提交位移之前就释放了。这不会存在问题吗？
+                                 *
+                                 *
+                                 * ==========
+                                 *
+                                 延伸问题：  在上面  我们分析了 三把锁，其中 第二把锁 synchronized(messageQueue)主要是用来限制
+                                 *多个线程同时消费messageQueue中的消息 第三把锁ProcessQueue主要是尽最大努力避免重复消费。
+                                 * 因为ProcessQueue 会在 MessageQueue重分配 后释放锁的时候检查其状态。 ProcessQueue的lock实现
+                                 * 是ReentrantLock，且是公平锁， synchronized(MessageQueue)也是公平锁，而且MessageQueue
+                                 * 和ProcessQueue存在一一对应的关系，那么可以不可以省略synchronized(messsageQueue)而只用ProcessQueue 进行lock呢？
+                                 * 答案是不可以： 因为生命周期不同，每次RebalanceImpl 都会创建ProcessQueue，RebalanceImpl#updateProcessQueueTableInRebalance()
+                                 * 但是MessageQueue并不是。
+                                 *
                                  *
                                  */
                                 this.processQueue.getLockConsume().lock();
@@ -615,12 +695,18 @@ public class ConsumeMessageOrderlyService implements ConsumeMessageService {
                             ConsumeMessageOrderlyService.this.getConsumerStatsManager()
                                 .incConsumeRT(ConsumeMessageOrderlyService.this.consumerGroup, messageQueue.getTopic(), consumeRT);
 
+                            /**
+                             * 因为消息是通过processQueue.takeMessages(consumeBatchSize); 从TreeMap中取出来的，消费失败后为了保证下次消费仍然是这个消息，需要将消息放回
+                             * 如果消费失败了，但是为了保证顺序性，会把这条消息从 consumingMsgOrderlyTreeMap 取出，重新放入 msgTreeMap 中，当超过了最大重试次数后，尝试发回 broker
+                             *
+                             */
                             continueConsume = ConsumeMessageOrderlyService.this.processConsumeResult(msgs, status, context, this);
                         } else {
                             continueConsume = false;
                         }
                     }
-                } else {
+                } else { //集群模式消费
+
                     if (this.processQueue.isDropped()) {
                         log.warn("the message queue not be able to consume, because it's dropped. {}", this.messageQueue);
                         return;
