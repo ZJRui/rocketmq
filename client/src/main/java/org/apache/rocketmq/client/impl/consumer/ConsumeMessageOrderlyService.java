@@ -555,6 +555,12 @@ public class ConsumeMessageOrderlyService implements ConsumeMessageService {
                 if (MessageModel.BROADCASTING.equals(ConsumeMessageOrderlyService.this.defaultMQPushConsumerImpl.messageModel())
                     || (this.processQueue.isLocked() && !this.processQueue.isLockExpired())) {
                     final long beginTime = System.currentTimeMillis();
+                    /**
+                     * 顺序消息是如何保证消息重试的？
+                     * 顺序消费ConsumeRequest是for死循环的方式一直消费，
+                     * 退出条件是本次消费任务的运行事件大于最大时间，或者是处理消息执行结果时明确指出不再继续消费。对于第二种情况会在退出之前 往消费者线程池中提交一个消费任务ConsumeRequest。
+                     * 顺序消费消息消费失败时，会将消息重新放入到ProcessQueue中时，再次重试次数为 Integer.MAX_VALUE，而且不延迟。
+                     */
                     for (boolean continueConsume = true; continueConsume; ) {
                         if (this.processQueue.isDropped()) {
                             log.warn("the message queue not be able to consume, because it's dropped. {}", this.messageQueue);
@@ -587,6 +593,18 @@ public class ConsumeMessageOrderlyService implements ConsumeMessageService {
                         final int consumeBatchSize =
                             ConsumeMessageOrderlyService.this.defaultMQPushConsumer.getConsumeMessageBatchMaxSize();
 
+                        /**
+                         * 这个地方有一个问题：  从ProcessQueue中 取出消息，消息消费的时候使用ProcessQueue的锁 锁定，从而禁止
+                         * 向Broker释放当前的MessageQueue的lock。防止当前被消费的消息被其他Consumer进程重复消费。
+                         * 问题是：如果当前线程 从ProcessQueue中取出了消息，但是尚未获取到ProcessQueue的锁，那么这个时候当前consumer释放
+                         * MessageQueue的lock。那么ProcessQueue中的消息以及从ProcessQueue中刚取出来的还未交给listener消费的消息 还会被继续消费处理吗？
+                         *  (1)对于那些刚从broker中取出来 还未交给listener执行的消息  会继续 获取ProcessQueue的锁，但是在获取到ProcessQueue锁之后会判断this.processQueue.isDropped()
+                         *  如果dropped则退出不再交给listener消费。因此这些消息不会交给listener消费
+                         *  （2）对于ProcessQueue中剩下的那些尚未来得及取出的消息， 线程池中可能还存在其他ConsumeRequest，这些ConsumeRequest执行的
+                         *  时候run方法中会判断（this.processQueue.isLocked() && !this.processQueue.isLockExpired()） 也就是上面的if。 如果发现MessageQueue的锁已经被释放了那么就不会继续执行。
+                         *
+                         *
+                         */
                         List<MessageExt> msgs = this.processQueue.takeMessages(consumeBatchSize);
                         defaultMQPushConsumerImpl.resetRetryAndNamespace(msgs, defaultMQPushConsumer.getConsumerGroup());
                         if (!msgs.isEmpty()) {
@@ -653,6 +671,9 @@ public class ConsumeMessageOrderlyService implements ConsumeMessageService {
                                  *
                                  */
                                 this.processQueue.getLockConsume().lock();
+                                /**
+                                 *
+                                 */
                                 if (this.processQueue.isDropped()) {
                                     log.warn("consumeMessage, the message queue not be able to consume, because it's dropped. {}",
                                         this.messageQueue);
@@ -724,7 +745,18 @@ public class ConsumeMessageOrderlyService implements ConsumeMessageService {
                         }
                     }
                 } else { //集群模式消费
-
+                    /**
+                     * 这个地方有一个问题：  从ProcessQueue中 取出消息，消息消费的时候使用ProcessQueue的锁 锁定，从而禁止
+                     * 向Broker释放当前的MessageQueue的lock。防止当前被消费的消息被其他Consumer进程重复消费。
+                     * 问题是：如果当前线程 从ProcessQueue中取出了消息，但是尚未获取到ProcessQueue的锁，那么这个时候当前consumer释放
+                     * MessageQueue的lock。那么ProcessQueue中的消息以及从ProcessQueue中刚取出来的还未交给listener消费的消息 还会被继续消费处理吗？
+                     *  (1)对于那些刚从broker中取出来 还未交给listener执行的消息  会继续 获取ProcessQueue的锁，但是在获取到ProcessQueue锁之后会判断this.processQueue.isDropped()
+                     *  如果dropped则退出不再交给listener消费。因此这些消息不会交给listener消费
+                     *  （2）对于ProcessQueue中剩下的那些尚未来得及取出的消息， 线程池中可能还存在其他ConsumeRequest，这些ConsumeRequest执行的
+                     *  时候run方法中会判断（this.processQueue.isLocked() && !this.processQueue.isLockExpired()） 也就是上面的if。 如果发现MessageQueue的锁已经被释放了那么就不会继续执行。
+                     *
+                     *
+                     */
                     if (this.processQueue.isDropped()) {
                         log.warn("the message queue not be able to consume, because it's dropped. {}", this.messageQueue);
                         return;

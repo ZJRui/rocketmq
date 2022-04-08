@@ -144,8 +144,25 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
         }
 
         /**
+         * 有个问题：集群模式的非顺序消息消费失败之后会将放置到重试主题消息队列，这个操作是谁来完成的？
+         * （1）消费端通过将重试消息发送到重试主题
+         * （2）Broker端收到消费端消息消费失败的回复之后 将消息放置到 重试队列
+         * 正确的是  Broker端处理。
+         *
+         * 集群消费模式下，当消息消费失败，RocketMQ 会通过消息重试机制重新投递消息，努力使该消息消费成功。
+         * 当消费者消费该重试消息后，需要返回结果给 broker，告知 broker 消费成功（ConsumeConcurrentlyStatus.CONSUMESUCCESS）或者
+         * 需要重新消费（ConsumeConcurrentlyStatus.RECONSUMELATER）。
+         *
+         * 问题2：顺序消息的消费失败是如何重试的？
+         * 顺序消息是如何保证消息重试的？
+         * 顺序消费的ConsumeRequest是for死循环的方式不断从ProcessQueue中取消息消费，退出条件是本次消费任务的运行时间大于指定时间，
+         * 顺序消费消息消费失败时，会将消息重新放入到ProcessQueue中无延迟重新消费，再次重试次数为 Integer.MAX_VALUE，而且不延迟。
+         * 退出条件是本次消费任务的运行时间大于指定时间，或者是处理消息执行结果时明确指出不再继续消费。对于第二种情况会在退出之前 往消费者线程池中提交一个消费任务ConsumeRequest。
+         *
+         *
          * 创建重试主题，重试主题名称 ： %RETRY%＋消费组名称，并从重试队列中随
          * 机选择一个队列 ，并构建 TopicConfig 主题配置信息 。
+         * 消息重试的原理是  broker收到消息消费失败的回复后 将根据重试次数消息写入重试主题的不同延迟队列中。重试主题的名称是 %retry%+消费者组名称，
          */
         String newTopic = MixAll.getRetryTopic(requestHeader.getGroup());
         int queueIdInt = Math.abs(this.random.nextInt() % 99999999) % subscriptionGroupConfig.getRetryQueueNums();

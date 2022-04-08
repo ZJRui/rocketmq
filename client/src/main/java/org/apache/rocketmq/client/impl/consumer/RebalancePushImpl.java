@@ -85,7 +85,7 @@ public class RebalancePushImpl extends RebalanceImpl {
     public boolean removeUnnecessaryMessageQueue(MessageQueue mq, ProcessQueue pq) {
 
         /**
-         *ConsumeRequest中 消息消费成功后会提交位移，
+         *  ConsumeRequest中 消息消费成功后会提交位移，
          * org.apache.rocketmq.client.consumer.store.RemoteBrokerOffsetStore#updateOffset(org.apache.rocketmq.common.message.MessageQueue, long, boolean)
          *
          * 需要注意的是 位移提交仅仅是保存在内存中，没有实时提交给Broker。当consumer关闭 或者RebalanceImpl重分配移除当前MessageQueue的时候才会将位移同步
