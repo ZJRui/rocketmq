@@ -50,6 +50,13 @@ public class EndTransactionProcessor extends AsyncNettyRequestProcessor implemen
         this.brokerController = brokerController;
     }
 
+    /**
+     * broker 对事务消息的处理
+     * @param ctx
+     * @param request
+     * @return
+     * @throws RemotingCommandException
+     */
     @Override
     public RemotingCommand processRequest(ChannelHandlerContext ctx, RemotingCommand request) throws
         RemotingCommandException {
@@ -107,6 +114,7 @@ public class EndTransactionProcessor extends AsyncNettyRequestProcessor implemen
                 }
 
                 case MessageSysFlag.TRANSACTION_COMMIT_TYPE: {
+                    //这里没有return 在下面处理
                     break;
                 }
 
@@ -116,12 +124,18 @@ public class EndTransactionProcessor extends AsyncNettyRequestProcessor implemen
                         RemotingHelper.parseChannelRemoteAddr(ctx.channel()),
                         requestHeader.toString(),
                         request.getRemark());
+                    //这里也没有return 在下面处理
                     break;
                 }
                 default:
+                    //请求头中没有设置 commitOrRollback则 直接返回null不做任何处理，
+                    //而且如果commitOrRollback被设置为unknow也会执行这里return null
                     return null;
             }
         }
+        /**
+         * 针对commit和rollback进行消息处理
+         */
         OperationResult result = new OperationResult();
         if (MessageSysFlag.TRANSACTION_COMMIT_TYPE == requestHeader.getCommitOrRollback()) {
             result = this.brokerController.getTransactionalMessageService().commitMessage(requestHeader);

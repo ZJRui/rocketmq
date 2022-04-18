@@ -94,3 +94,15 @@ public class TransactionListenerImpl implements TransactionListener {
 5. Committed message reput to the user’s target topic may fail. Currently, it depends on the log record. High availability is ensured by the high availability mechanism of RocketMQ itself. If you want to ensure that the transactional message isn’t lost and the transaction integrity is guaranteed, it is recommended to use synchronous double write. mechanism. 
 6. Producer IDs of transactional messages cannot be shared with producer IDs of other types of messages. Unlike other types of message, transactional messages allow backward queries. MQ Server query clients by their Producer IDs.
 
+1.事务性消息没有调度和批量支持。
+
+2.为了避免单条消息被检查次数过多，导致半队列消息堆积，我们默认将单条消息的检查次数限制为15次，但用户可以通过更改```来更改此限制在broker配置中的transactionCheckMax```参数，如果一条消息被检查过```transactionCheckMax``次，broker默认会丢弃这条消息并同时打印错误日志。用户可以通过重写 ```AbstractTransactionalMessageCheckListener``` 类来更改此行为。
+
+3.事务消息将在代理配置中的参数 g```transactionTimeout``` 确定的一定时间后检查。并且用户也可以在发送事务消息时通过设置用户属性CHECK_IMMUNITY_TIME_IN_SECONDS来改变这个限制，这个参数优先于``transactionTimeout`参数。 
+
+4.一个事务性消息可能会被检查或消费不止一次。 
+
+5.提交给用户目标主题的消息reput可能会失败。目前，它取决于日志记录。高可用是由 RocketMQ 本身的高可用机制来保证的。如果要保证事务消息不丢失，保证事务完整性，推荐使用同步双写。机制。
+
+6.事务性消息的生产者ID不能与其他类型消息的生产者ID共享。与其他类型的消息不同，事务性消息允许向后查询。 MQ 服务器通过其生产者 ID 查询客户端。
+

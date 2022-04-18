@@ -1574,6 +1574,10 @@ public class DefaultMQProducerImpl implements MQProducerInner {
     public TransactionSendResult sendMessageInTransaction(final Message msg,
         final LocalTransactionExecuter localTransactionExecuter, final Object arg)
         throws MQClientException {
+        /**
+         *
+         * broker 对事务消息的处理 ： org.apache.rocketmq.broker.processor.EndTransactionProcessor#processRequest(io.netty.channel.ChannelHandlerContext, org.apache.rocketmq.remoting.protocol.RemotingCommand)
+         */
         TransactionListener transactionListener = getCheckListener();
         if (null == localTransactionExecuter && null == transactionListener) {
             throw new MQClientException("tranExecutor is null", null);
@@ -1595,6 +1599,10 @@ public class DefaultMQProducerImpl implements MQProducerInner {
             throw new MQClientException("send message Exception", e);
         }
 
+        /**
+         * 这里先设置为 unknow，比如当executeLocalTransaction方法抛出异常的时候， 得不到executeLocalTransaction的返回值
+         * 此时就使用unknow作为localTransactionState
+         */
         LocalTransactionState localTransactionState = LocalTransactionState.UNKNOW;
         Throwable localException = null;
         switch (sendResult.getSendStatus()) {
@@ -1611,6 +1619,15 @@ public class DefaultMQProducerImpl implements MQProducerInner {
                         localTransactionState = localTransactionExecuter.executeLocalTransactionBranch(msg, arg);
                     } else if (transactionListener != null) {
                         log.debug("Used new transaction API");
+                        /**
+                         * 从这里我们可以看到 ： 事务消息发送成功 并且返回状态为 send_ok 才会执行监听器中的executeLocalTransaction。
+                         * 因为 业务数据的落地和事务消息的发送都是在同一个事务中，因此executeLocalTransaction也是在事务中执行的。
+                         *
+                         * 需要注意的是：在执行executeLocalTransaction过程中，它手动捕获了 Throwable 异常。这就说明，即便执行本地事务失败，也不会触发回滚的。
+                         * 因此考虑这种情况： 在一个事务中 先执行 数据库落地，然后发送消息，这个时候发送消息失败了 也就是返回值不是send_ok，这个时候这个异常会被捕获
+                         * 上层事务感知不到异常，最终导致事务提交，但是消息发送失败了。
+                         *
+                         */
                         localTransactionState = transactionListener.executeLocalTransaction(msg, arg);
                     }
                     if (null == localTransactionState) {
@@ -1623,6 +1640,16 @@ public class DefaultMQProducerImpl implements MQProducerInner {
                     }
                 } catch (Throwable e) {
                     log.info("executeLocalTransactionBranch exception", e);
+                    /**
+                     * 注意这里： 在执行executeLocalTransaction过程中，它手动捕获了 Throwable 异常。这就说明，即便执行本地事务失败，也不会触发事务回滚的。
+                     * 问题： 如果executeLocalTransaction方法中 抛出了异常，那么localTransactionState的值是什么？
+                     * 从代码来看抛出异常是 localTransactionState 没有设置为rollback 也没有设置为unknow或者commit。也就是在下面的
+                     * endTransaction方法中传递的第二个参数为null，在endTransaction方法中 requestHeader 没有设置commit rollback或者unknow，但是
+                     * 因为localException不为null， 异常的msg被设置为  request.setRemark(remark);
+                     * 在Broker端的 EndTransactionProcessor#processRequest(io.netty.channel.ChannelHandlerContext, org.apache.rocketmq.remoting.protocol.RemotingCommand)
+                     * 方法中   switch (requestHeader.getCommitOrRollback())  如果发现commitOrRollback为null则 不做任何处理，因此消息不会被提交或者回滚。
+                     *
+                     */
                     log.info(msg.toString());
                     localException = e;
                 }
@@ -1631,6 +1658,9 @@ public class DefaultMQProducerImpl implements MQProducerInner {
             case FLUSH_DISK_TIMEOUT:
             case FLUSH_SLAVE_TIMEOUT:
             case SLAVE_NOT_AVAILABLE:
+                /**
+                 * 消息发送失败，rocketmq 消息回滚
+                 */
                 localTransactionState = LocalTransactionState.ROLLBACK_MESSAGE;
                 break;
             default:
@@ -1638,17 +1668,29 @@ public class DefaultMQProducerImpl implements MQProducerInner {
         }
 
         try {
+            /**
+             * 发送给Broker消息 终止这个事务消息。
+             * 注意： executeLocalTransaction方法执行过程中抛出异常的话 会被catch，这个时候localException不为null，但是
+             * localTransactionState=null，且在endTransaction 方法中因为localTransactionState为null，所以不会
+             * 在请求中设置setCommitOrRollback或者unknow标识，因此问题就是 这个时候broker如何处理这个事务消息？
+             */
             this.endTransaction(sendResult, localTransactionState, localException);
         } catch (Exception e) {
             log.warn("local transaction execute " + localTransactionState + ", but end broker transaction failed", e);
         }
 
         TransactionSendResult transactionSendResult = new TransactionSendResult();
+        /**
+         * 事务消息的发送结果
+         */
         transactionSendResult.setSendStatus(sendResult.getSendStatus());
         transactionSendResult.setMessageQueue(sendResult.getMessageQueue());
         transactionSendResult.setMsgId(sendResult.getMsgId());
         transactionSendResult.setQueueOffset(sendResult.getQueueOffset());
         transactionSendResult.setTransactionId(sendResult.getTransactionId());
+        /**
+         * executeLocalTransaction是否抛出了异常
+         */
         transactionSendResult.setLocalTransactionState(localTransactionState);
         return transactionSendResult;
     }
@@ -1676,6 +1718,9 @@ public class DefaultMQProducerImpl implements MQProducerInner {
         EndTransactionRequestHeader requestHeader = new EndTransactionRequestHeader();
         requestHeader.setTransactionId(transactionId);
         requestHeader.setCommitLogOffset(id.getOffset());
+        /**
+         * 注意这里如果 localTransactionState为null，则 没有设置请求头setCommitOrRollback
+         */
         switch (localTransactionState) {
             case COMMIT_MESSAGE:
                 requestHeader.setCommitOrRollback(MessageSysFlag.TRANSACTION_COMMIT_TYPE);
@@ -1693,6 +1738,11 @@ public class DefaultMQProducerImpl implements MQProducerInner {
         requestHeader.setProducerGroup(this.defaultMQProducer.getProducerGroup());
         requestHeader.setTranStateTableOffset(sendResult.getQueueOffset());
         requestHeader.setMsgId(sendResult.getMsgId());
+        /**
+         * 在执行executeLocalTransaction 出现异常时 localTransactionState为null，但是localException不为null
+         * broker端在处理这个消息的时候  请求头中没有设置 commitOrRollback则 直接返回null不做任何处理，
+         *   而且如果commitOrRollback被设置为unknow也会执行这里return null 那么也就是说 会执行事务回查
+         */
         String remark = localException != null ? ("executeLocalTransactionBranch exception: " + localException.toString()) : null;
         this.mQClientFactory.getMQClientAPIImpl().endTransactionOneway(brokerAddr, requestHeader, remark,
             this.defaultMQProducer.getSendMsgTimeout());

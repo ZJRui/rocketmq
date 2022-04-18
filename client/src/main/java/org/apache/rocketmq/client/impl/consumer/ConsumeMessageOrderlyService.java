@@ -746,14 +746,14 @@ public class ConsumeMessageOrderlyService implements ConsumeMessageService {
                     }
                 } else { //集群模式消费
                     /**
-                     * 这个地方有一个问题：  从ProcessQueue中 取出消息，消息消费的时候使用ProcessQueue的锁 锁定，从而禁止
-                     * 向Broker释放当前的MessageQueue的lock。防止当前被消费的消息被其他Consumer进程重复消费。
-                     * 问题是：如果当前线程 从ProcessQueue中取出了消息，但是尚未获取到ProcessQueue的锁，那么这个时候当前consumer释放
-                     * MessageQueue的lock。那么ProcessQueue中的消息以及从ProcessQueue中刚取出来的还未交给listener消费的消息 还会被继续消费处理吗？
-                     *  (1)对于那些刚从broker中取出来 还未交给listener执行的消息  会继续 获取ProcessQueue的锁，但是在获取到ProcessQueue锁之后会判断this.processQueue.isDropped()
-                     *  如果dropped则退出不再交给listener消费。因此这些消息不会交给listener消费
-                     *  （2）对于ProcessQueue中剩下的那些尚未来得及取出的消息， 线程池中可能还存在其他ConsumeRequest，这些ConsumeRequest执行的
-                     *  时候run方法中会判断（this.processQueue.isLocked() && !this.processQueue.isLockExpired()） 也就是上面的if。 如果发现MessageQueue的锁已经被释放了那么就不会继续执行。
+                     个地方有一个问题：  从ProcessQueue中 取出消息，消息消费的时候使用ProcessQueue的锁 锁定，从而禁止
+                     Broker释放当前的MessageQueue的lock。防止当前被消费的消息被其他Consumer进程重复消费。
+                     题是：如果当前线程 从ProcessQueue中取出了消息，但是尚未获取到ProcessQueue的锁，那么这个时候当前consumer释放
+                     essageQueue的lock。那么ProcessQueue中的消息以及从ProcessQueue中刚取出来的还未交给listener消费的消息 还会被继续消费处理吗？
+                     (1)对于那些刚从broker中取出来 还未交给listener执行的消息  会继续 获取ProcessQueue的锁，但是在获取到ProcessQueue锁之后会判断this.processQueue.isDropped()
+                     如果dropped则退出不再交给listener消费。因此这些消息不会交给listener消费
+                     （2）对于ProcessQueue中剩下的那些尚未来得及取出的消息， 线程池中可能还存在其他ConsumeRequest，这些ConsumeRequest执行的
+                     时候run方法中会判断（this.processQueue.isLocked() && !this.processQueue.isLockExpired()） 也就是上面的if。 如果发现MessageQueue的锁已经被释放了那么就不会继续执行。
                      *
                      *
                      */
