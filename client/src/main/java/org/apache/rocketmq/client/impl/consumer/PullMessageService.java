@@ -43,7 +43,8 @@ public class PullMessageService extends ServiceThread {
      ProcessQueue的作用是为了做流量控制。
 
 
-     Consumer创建的时候会创建一个线程池，同时这个线程池指定了使用Consumer对象中的consumeRequestQueue队列。
+     Consumer创建的时候会创建一个线程池，同时这个线程池指定了使用Consumer对象中的consumeRequestQueue队列，这个队列用来存放 消息拉取线程将拉取到的消息封装成ConsumeRequest,然后
+     提交到这个队列中，从而消费者线程池中的线程就能从队列中获取消费任务了。
      消息消费的过程是，PullMessageService线程执行消息拉取会通过pullMessage方法
      org.apache.rocketmq.client.impl.consumer.DefaultMQPushConsumerImpl#pullMessage
      在PullMessage方法中 对拉取到的消息 会放入到ProcessQueue 消息处理队列中。

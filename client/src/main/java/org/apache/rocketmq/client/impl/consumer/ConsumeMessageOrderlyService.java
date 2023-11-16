@@ -212,6 +212,24 @@ public class ConsumeMessageOrderlyService implements ConsumeMessageService {
         final ProcessQueue processQueue,
         final MessageQueue messageQueue,
         final boolean dispathToConsume) {
+        /**
+         * dispathToComsume的作用
+         * 于顺序消息的处理有一个问题：
+         * 我们知道对于非顺序消息的消费，在拉取到消息之后会将消息封装成ConsumeRequest提交到消费者任务线程池中消费，
+         * 这个ConsumeRequest中会持有本批次拉取到的消息。但是对于顺序消息，在拉取到消息之后 consumeRequest中不会持有 本批次拉去
+         * 到的消息，拉取到的消息先是被放置到了 队列中，然后消费者任务线程从这个队列中取消息进行处理，从而保证消息的顺序消费。对于顺序
+         * 消息，消费者线程池的线程 总是尽可能多的从本地顺序取出消息交给listener消费。而不是向非顺序消息那种仅仅是从线程池的任务队列
+         * 中取出一个任务，然后将这个任务中的消息交给listener就完事了。
+         *
+         * 那么问题： 是不是每次拉取到消息之后就会创建一个 ConsumeRequest 提交到线程池？ 比如说第一次拉去到了100个消息，创
+         * 建一个consumeRequest到线程池，然后第二次又拉取到了100个消息，然后又会创建一个consumeRequest，这样线程池就会执行两
+         * 个consumeRequest，线程池队列中任务可能会被多个线程同时取出并发执行，但是每个consumeRequest又都是 互斥从队
+         * 列中取消息处理，所以实际只会有一个consumeRequest正在运行，另一个consumeRequest会阻塞在获取队列处理权上，这样更
+         * 多的consumeRequest就会导致整个线程池处于阻塞状态？ 这个问题是如何规避的？ 实际上在拉取到消息之后 会将
+         * 消息放置到processQueue，但是并不一定会创建ConsumeRequest提交到线程池中。因为ProcessQueue对象上
+         * 有一个private volatile boolean consuming = false; 属性表示他的消息是否正在被消费处理。如果当前
+         * 已经有线程正在处理ProcessQueue中的消息，则不需要提交ConsumeRequest到线程池中
+         */
         if (dispathToConsume) {
             ConsumeRequest consumeRequest = new ConsumeRequest(processQueue, messageQueue);
             this.consumeExecutor.submit(consumeRequest);
@@ -465,6 +483,27 @@ public class ConsumeMessageOrderlyService implements ConsumeMessageService {
         private final ProcessQueue processQueue;
         private final MessageQueue messageQueue;
 
+        /**
+         *
+         * 对于顺序消息的处理有一个问题：
+         * 我们知道对于非顺序消息的消费，在拉取到消息之后会将消息封装成ConsumeRequest提交到消费者任务线程池中消费，
+         * 这个ConsumeRequest中会持有本批次拉取到的消息。但是对于顺序消息，在拉取到消息之后 consumeRequest中不会持有 本批次拉去
+         * 到的消息，拉取到的消息先是被放置到了 队列中，然后消费者任务线程从这个队列中取消息进行处理，从而保证消息的顺序消费。对于顺序
+         * 消息，消费者线程池的线程 总是尽可能多的从本地顺序取出消息交给listener消费。而不是向非顺序消息那种仅仅是从线程池的任务队列
+         * 中取出一个任务，然后将这个任务中的消息交给listener就完事了。
+         *
+         * 那么问题： 是不是每次拉取到消息之后就会创建一个 ConsumeRequest 提交到线程池？ 比如说第一次拉去到了100个消息，创
+         * 建一个consumeRequest到线程池，然后第二次又拉取到了100个消息，然后又会创建一个consumeRequest，这样线程池就会执行两
+         * 个consumeRequest，线程池队列中任务可能会被多个线程同时取出并发执行，但是每个consumeRequest又都是 互斥从队
+         * 列中取消息处理，所以实际只会有一个consumeRequest正在运行，另一个consumeRequest会阻塞在获取队列处理权上，这样更
+         * 多的consumeRequest就会导致整个线程池处于阻塞状态？ 这个问题是如何规避的？ 实际上在拉取到消息之后 会将
+         * 消息放置到processQueue，但是并不一定会创建ConsumeRequest提交到线程池中。因为ProcessQueue对象上
+         * 有一个private volatile boolean consuming = false; 属性表示他的消息是否正在被消费处理。如果当前
+         * 已经有线程正在处理ProcessQueue中的消息，则不需要提交ConsumeRequest到线程池中
+         *
+         * @param processQueue
+         * @param messageQueue
+         */
         public ConsumeRequest(ProcessQueue processQueue, MessageQueue messageQueue) {
             this.processQueue = processQueue;
             this.messageQueue = messageQueue;
